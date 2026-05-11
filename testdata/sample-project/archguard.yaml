@@ -1,0 +1,21 @@
+project:
+  name: "payment-service"
+  src_root: "src"
+  exclude: ["tests/**", "vendor/**"]
+layers:
+  - { name: "Domain", namespaces: ["App\\Domain\\*"], paths: ["src/Domain/"] }
+  - { name: "Application", namespaces: ["App\\Application\\*"], paths: ["src/Application/"] }
+  - { name: "Infrastructure", namespaces: ["App\\Infrastructure\\*"], paths: ["src/Infrastructure/"] }
+rules:
+  - { from: "Domain", to: "Application", allow: false, description: "Domain must not depend on Application" }
+  - { from: "Domain", to: "Infrastructure", allow: false, description: "Domain must not depend on Infrastructure" }
+  - { from: "Application", to: "Domain", allow: true, description: "Application uses domain entities" }
+  - { from: "Application", to: "Infrastructure", allow: false, description: "Application must not depend on Infrastructure" }
+  - { from: "Infrastructure", to: "Domain", allow: true, description: "Infrastructure implements domain interfaces" }
+domain_context:
+  domain: "FinTech"
+  description: "Payment processing system with audit and data isolation requirements."
+  domain_rules:
+    - { id: "fintech_audit_trail", description: "Financial transactions must have audit trail", severity: "critical" }
+    - { id: "fintech_data_isolation", description: "Payment data must not appear in logs", severity: "critical" }
+    - { id: "fintech_transaction_integrity", description: "Balance changes must be in DB transaction", severity: "high" }
