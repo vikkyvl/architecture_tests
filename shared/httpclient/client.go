@@ -64,8 +64,11 @@ func (c *Client) Post(cfg RequestConfig) (*Response, error) {
 		if err != nil {
 			return nil, apperrors.Wrap(apperrors.KindExternalService, "http request", errRequestFailed, err)
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if readErr != nil {
+			return nil, apperrors.Wrap(apperrors.KindExternalService, "http response", "failed to read response body", readErr)
+		}
 
 		if resp.StatusCode != http.StatusTooManyRequests {
 			return &Response{StatusCode: resp.StatusCode, Body: body}, nil

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	errNoAPIKeyFound       = "no API key found: configure %s or %s in .env"
+	errNoAPIKeyFound       = "no API key found: configure %s, %s or %s in .env"
 	errUnsupportedProvider = "unsupported provider: %s"
 )
 
@@ -25,6 +25,8 @@ func NewProvider(provider, apiKey, model string) (Provider, error) {
 		return NewAnthropicClient(apiKey, model)
 	case c.ProviderGemini:
 		return NewGeminiClient(apiKey, model)
+	case c.ProviderOpenAI:
+		return NewOpenAIClient(apiKey, model)
 	case "":
 		if apiKey != "" || os.Getenv(c.EnvAnthropicKey) != "" {
 			return NewAnthropicClient(apiKey, model)
@@ -32,7 +34,10 @@ func NewProvider(provider, apiKey, model string) (Provider, error) {
 		if os.Getenv(c.EnvGeminiKey) != "" {
 			return NewGeminiClient("", model)
 		}
-		return nil, apperrors.Validation(fmt.Sprintf(errNoAPIKeyFound, c.EnvAnthropicKey, c.EnvGeminiKey))
+		if os.Getenv(c.EnvOpenAIKey) != "" {
+			return NewOpenAIClient("", model)
+		}
+		return nil, apperrors.Validation(fmt.Sprintf(errNoAPIKeyFound, c.EnvAnthropicKey, c.EnvGeminiKey, c.EnvOpenAIKey))
 	default:
 		return nil, apperrors.Validation(fmt.Sprintf(errUnsupportedProvider, provider))
 	}

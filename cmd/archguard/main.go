@@ -33,7 +33,7 @@ const (
 	outputMDFlagDefault     = "report.md"
 	outputMDFlagDesc        = "Markdown report path"
 	providerFlagName        = "provider"
-	providerFlagDesc        = "LLM provider: anthropic / gemini"
+	providerFlagDesc        = "LLM provider: anthropic / gemini / openai"
 	apiKeyFlagName          = "api-key"
 	apiKeyFlagDesc          = "API key (or use .env)"
 	modelFlagName           = "model"

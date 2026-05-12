@@ -45,7 +45,10 @@ func (a *AnthropicClient) SendMessage(req Request) (*Response, error) {
 	if req.MaxTokens == 0 {
 		req.MaxTokens = c.DefaultMaxTokens
 	}
-	body, _ := json.Marshal(req)
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.KindInternal, "anthropic request", "failed to marshal request", err)
+	}
 
 	resp, err := a.http.Post(httpclient.RequestConfig{
 		URL:  c.AnthropicBaseURL,

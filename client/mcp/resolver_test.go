@@ -18,9 +18,9 @@ func newTestResolver(t *testing.T) (*mcp.Resolver, string) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Name: "test", Language: "go"},
 	}
-	cm := consent.NewManager(false, dir)
+	cm := consent.NewManager(false, dir, nil)
 	al := audit.NewLog()
-	return mcp.NewResolver(cfg, dir, "", nil, cm, al), dir
+	return mcp.NewResolver(cfg, dir, "", nil, cm, al, nil), dir
 }
 
 func TestReadFileBlocksTraversal(t *testing.T) {
@@ -46,15 +46,15 @@ func TestReadFileBlocksSensitivePath(t *testing.T) {
 func TestReadFileSuccess(t *testing.T) {
 	dir := t.TempDir()
 	// pre-authorize read_file so non-interactive manager allows it
-	consentDir := filepath.Join(dir, ".aat")
+	consentDir := filepath.Join(dir, ".archguard")
 	_ = os.MkdirAll(consentDir, 0700)
 	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
 		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
 
 	cfg := &config.Config{Project: config.ProjectConfig{Name: "test", Language: "go"}}
-	cm := consent.NewManager(false, dir)
+	cm := consent.NewManager(false, dir, nil)
 	al := audit.NewLog()
-	r := mcp.NewResolver(cfg, dir, "", nil, cm, al)
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil)
 
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
 	got, err := r.ExecuteTool("read_file", map[string]interface{}{"path": "main.go"}, 10)

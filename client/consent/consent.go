@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	c "github.com/archguard/project/shared/constants"
@@ -23,8 +24,8 @@ const (
 	choiceAlwaysAllow     = "p"
 	choiceDeny            = "d"
 	recursiveGlobSuffix   = "/**"
-	projectConsentPath    = ".aat/consent.yaml"
-	userConsentPath       = ".config/aat/consent.yaml"
+	projectConsentPath    = ".archguard/consent.yaml"
+	userConsentPath       = ".config/archguard/consent.yaml"
 	consentFilePermission = 0o600
 	consentDirPermission  = 0o700
 	patternAll            = "all"
@@ -46,6 +47,7 @@ type Manager struct {
 	userAllowed    []Rule
 	projectPath    string
 	interactive    bool
+	allowedSystems map[string]bool
 }
 
 type Rule struct {
@@ -101,8 +103,8 @@ type consentChoiceModel struct {
 
 var _ tea.Model = consentChoiceModel{}
 
-func NewManager(interactive bool, projectPath string) *Manager {
-	m := &Manager{interactive: interactive, projectPath: projectPath}
+func NewManager(interactive bool, projectPath string, allowedSystems map[string]bool) *Manager {
+	m := &Manager{interactive: interactive, projectPath: projectPath, allowedSystems: allowedSystems}
 	m.projectAllowed = loadRules(filepath.Join(projectPath, projectConsentPath))
 	if home, err := os.UserHomeDir(); err == nil {
 		m.userAllowed = loadRules(filepath.Join(home, userConsentPath))
@@ -111,7 +113,7 @@ func NewManager(interactive bool, projectPath string) *Manager {
 }
 
 func (m *Manager) Check(toolName string, args map[string]interface{}, budget int) Decision {
-	if blocked, value := isBlockedCall(toolName, args); blocked {
+	if blocked, value := m.isBlockedCall(toolName, args); blocked {
 		fmt.Fprint(os.Stderr, renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgBlockedTool, toolName, value))))
 		return c.DecisionBlocked
 	}
@@ -146,8 +148,13 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 		"",
 		renderConsentKV(msgConsentTool, toolName),
 	}
-	for k, v := range args {
-		rows = append(rows, renderConsentKV(k, fmt.Sprintf("%v", v)))
+	argKeys := make([]string, 0, len(args))
+	for k := range args {
+		argKeys = append(argKeys, k)
+	}
+	sort.Strings(argKeys)
+	for _, k := range argKeys {
+		rows = append(rows, renderConsentKV(k, fmt.Sprintf("%v", args[k])))
 	}
 	rows = append(rows, renderConsentKV(msgConsentBudget, fmt.Sprintf("%d calls remaining", budget)))
 
@@ -161,13 +168,6 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 	case choiceAlwaysAllow:
 		pattern := m.readPattern(toolName, args)
 		rule := Rule{Tool: toolName, Pattern: pattern}
-		if m.promptSaveScope() == "u" {
-			m.userAllowed = append(m.userAllowed, rule)
-			if home, err := os.UserHomeDir(); err == nil {
-				_ = saveRules(filepath.Join(home, userConsentPath), m.userAllowed)
-			}
-			return c.DecisionGlobalAllow
-		}
 		m.projectAllowed = append(m.projectAllowed, rule)
 		_ = saveRules(filepath.Join(m.projectPath, projectConsentPath), m.projectAllowed)
 		return c.DecisionProjectAllow
@@ -183,8 +183,8 @@ func runConsentMenu(rows []string) string {
 		rows: rows,
 		options: []consentOption{
 			{key: choiceAllowOnce, label: "Allow once", description: "Only this tool call"},
-			{key: choiceAllowForSession, label: "Allow session", description: "Same pattern until review ends"},
-			{key: choiceAlwaysAllow, label: "Always allow", description: "Save pattern to project .aat/consent.yaml"},
+			{key: choiceAllowForSession, label: "Allow session", description: "Same tool until review ends"},
+			{key: choiceAlwaysAllow, label: "Always allow", description: "Remember this pattern"},
 			{key: choiceDeny, label: "Deny", description: "Return denied tool result"},
 		},
 	}
@@ -274,15 +274,6 @@ func (m *Manager) readPattern(toolName string, args map[string]interface{}) stri
 	return pattern
 }
 
-func (m *Manager) promptSaveScope() string {
-	fmt.Fprint(os.Stderr, consentChoiceStyle.Render("Save to [p]roject / [u]ser (default: project): "))
-	input, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	if strings.TrimSpace(strings.ToLower(input)) == "u" {
-		return "u"
-	}
-	return "p"
-}
-
 func renderConsentKV(label, value string) string {
 	return consentLabelStyle.Render(label) + " " + consentValueStyle.Render(value)
 }
@@ -291,7 +282,7 @@ func renderStatus(text string) string {
 	return consentPanelStyle.Render(text) + "\n"
 }
 
-func isBlockedCall(toolName string, args map[string]interface{}) (bool, string) {
+func (m *Manager) isBlockedCall(toolName string, args map[string]interface{}) (bool, string) {
 	if toolName == c.ToolReadFile {
 		path, _ := args[c.ArgPath].(string)
 		if path == "" || isPathBlocked(path) {
@@ -301,7 +292,7 @@ func isBlockedCall(toolName string, args map[string]interface{}) (bool, string) 
 
 	if toolName == c.ToolGetExternalContext {
 		system := externalSystem(args)
-		if !c.AllowedExternalSystems[system] {
+		if !m.allowedSystems[system] {
 			return true, system
 		}
 	}

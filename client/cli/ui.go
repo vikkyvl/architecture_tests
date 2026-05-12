@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +53,7 @@ var (
 	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
 	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	linkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Underline(true)
 
 	successBadgeStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -163,6 +166,10 @@ func renderKV(label, value string) string {
 	return labelStyle.Render(label) + " " + valueStyle.Render(value)
 }
 
+func renderKVRaw(label, value string) string {
+	return labelStyle.Render(label) + " " + value
+}
+
 func renderStep(text string) string {
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
@@ -195,10 +202,26 @@ func renderRetry(provider string, attempt, maxAttempts int, wait time.Duration, 
 
 func renderReportPaths(jsonPath, mdPath string) string {
 	rows := []string{
-		renderKV("JSON report", jsonPath),
-		renderKV("Markdown", mdPath),
+		renderKVRaw("JSON report", linkStyle.Render(jsonPath)),
+		renderKVRaw("Markdown", linkStyle.Render(mdPath)),
 	}
-	return renderPanel("Report files", rows)
+	panel := renderPanel("Report files", rows)
+	panel = insertFileLink(panel, jsonPath)
+	panel = insertFileLink(panel, mdPath)
+	return panel
+}
+
+// insertFileLink wraps occurrences of path in the already-rendered panel with
+// an OSC 8 terminal hyperlink. Applied after lipgloss rendering to avoid
+// lipgloss mangling the non-SGR escape sequences.
+func insertFileLink(panel, path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return panel
+	}
+	uri := (&url.URL{Scheme: "file", Path: abs}).String()
+	linked := fmt.Sprintf("\x1b]8;;%s\a%s\x1b]8;;\a", uri, path)
+	return strings.Replace(panel, path, linked, 1)
 }
 
 func renderResults(ar *models.AnalysisResult) string {

@@ -24,6 +24,7 @@ const (
 const (
 	ProviderAnthropic = "anthropic"
 	ProviderGemini    = "gemini"
+	ProviderOpenAI    = "openai"
 )
 
 const (
@@ -44,6 +45,23 @@ const (
 )
 
 const (
+	OpenAIBaseURL    = "https://api.openai.com/v1/chat/completions"
+	OpenAIModel      = "gpt-4o"
+	OpenAITimeout    = 120 * time.Second
+	OpenAIMaxRetries = 5
+	OpenAIRetryWait  = 15 * time.Second
+)
+
+const (
+	NotionBaseURL       = "https://api.notion.com/v1"
+	NotionVersion       = "2022-06-28"
+	NotionVersionHeader = "Notion-Version"
+	NotionTimeout       = 30 * time.Second
+	NotionMaxResults    = 3
+	NotionMaxContentLen = 3000
+)
+
+const (
 	ToolCallBegin = "TOOL_CALL_BEGIN"
 	ToolCallEnd   = "TOOL_CALL_END"
 )
@@ -51,6 +69,7 @@ const (
 const (
 	EnvAnthropicKey = "ANTHROPIC_API_KEY"
 	EnvGeminiKey    = "GEMINI_API_KEY"
+	EnvOpenAIKey    = "OPENAI_API_KEY"
 )
 
 const (
@@ -112,6 +131,8 @@ const (
 	HTTPHeaderAnthropicVersion  = "anthropic-version"
 	HTTPHeaderCFAccessClientID  = "CF-Access-Client-Id"
 	HTTPHeaderCFAccessClientSec = "CF-Access-Client-Secret"
+	HTTPHeaderAuthorization     = "Authorization"
+	HTTPAuthBearer              = "Bearer "
 )
 
 const (
@@ -169,11 +190,6 @@ var BlacklistPaths = []string{
 	".env", "*.pem", "*.key", "secrets/**",
 }
 
-var AllowedExternalSystems = map[string]bool{
-	"notion":   true,
-	"youtrack": true,
-}
-
 var AutoApprovedTools = map[string]bool{
 	ToolGetProjectStructure:  true,
 	ToolGetArchitectureRules: true,
@@ -209,7 +225,6 @@ var ExtToLang = map[string]string{
 	"kt": "kotlin", "swift": "swift", "rs": "rust",
 }
 
-// IsSensitivePath reports whether a path matches the blacklist or is a hidden file.
 func IsSensitivePath(path string) bool {
 	normalized := filepath.ToSlash(filepath.Clean(path))
 	if strings.HasPrefix(filepath.Base(normalized), ".") {

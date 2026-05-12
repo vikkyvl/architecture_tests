@@ -45,7 +45,10 @@ func (g *GeminiClient) Model() string { return g.model }
 
 func (g *GeminiClient) SendMessage(req Request) (*Response, error) {
 	gr := g.toGemini(req)
-	body, _ := json.Marshal(gr)
+	body, err := json.Marshal(gr)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.KindInternal, "gemini request", "failed to marshal request", err)
+	}
 	url := fmt.Sprintf(geminiGenerateURLFormat, c.GeminiBaseURL, g.model, g.apiKey)
 
 	resp, err := g.http.Post(httpclient.RequestConfig{
@@ -134,7 +137,11 @@ func (g *GeminiClient) toGemini(req Request) gRequest {
 				}
 			case c.ContentTypeToolUse:
 				var args map[string]interface{}
-				json.Unmarshal(b.Input, &args)
+				if len(b.Input) > 0 {
+					if err := json.Unmarshal(b.Input, &args); err != nil {
+						args = make(map[string]interface{})
+					}
+				}
 				parts = append(parts, gPart{FuncCall: &gFCall{Name: b.Name, Args: args}})
 			case c.ContentTypeToolResult:
 				name := findToolName(req.Messages, b.ToolUseID)
@@ -162,10 +169,13 @@ func (g *GeminiClient) fromGemini(gr gResponse) *Response {
 		}
 		if p.FuncCall != nil {
 			hasCalls = true
-			args, _ := json.Marshal(p.FuncCall.Args)
+			argBytes, err := json.Marshal(p.FuncCall.Args)
+			if err != nil {
+				argBytes = []byte("{}")
+			}
 			resp.Content = append(resp.Content, ContentBlock{
 				Type: c.ContentTypeToolUse, ID: fmt.Sprintf(geminiCallIDFormat, p.FuncCall.Name, len(resp.Content)),
-				Name: p.FuncCall.Name, Input: args,
+				Name: p.FuncCall.Name, Input: argBytes,
 			})
 		}
 	}
