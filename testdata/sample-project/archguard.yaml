@@ -12,6 +12,14 @@ rules:
   - { from: "Application", to: "Domain", allow: true, description: "Application uses domain entities" }
   - { from: "Application", to: "Infrastructure", allow: false, description: "Application must not depend on Infrastructure" }
   - { from: "Infrastructure", to: "Domain", allow: true, description: "Infrastructure implements domain interfaces" }
+external:
+  - system: notion
+    command: ["npx", "-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_API_TOKEN: "${NOTION_API_TOKEN}"
+    search_tool: "API-post-search"
+    search_arg: "query"
+
 domain_context:
   domain: "FinTech"
   description: "Payment processing system with audit and data isolation requirements."

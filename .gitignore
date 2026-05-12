@@ -12,7 +12,8 @@ Thumbs.db
 *.swo
 
 # Local consent/config
-.aat/
+**/.archguard/
+**/.aat/
 
 # Go build/test artifacts
 .gocache/
@@ -24,8 +25,9 @@ build/
 coverage.out
 
 # Project binary
-/project
+/archguard
 
 # Generated reports
 report.json
 report.md
+**/archguard-external-context.md

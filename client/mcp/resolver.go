@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/archguard/project/client/audit"
-	"github.com/archguard/project/client/consent"
 	"github.com/archguard/project/shared/apperrors"
 	"github.com/archguard/project/shared/config"
 	c "github.com/archguard/project/shared/constants"
@@ -35,7 +33,7 @@ var schemaEmpty = json.RawMessage(emptyObjectSchema)
 const (
 	readFileSchema                  = `{"type":"object","properties":{"path":{"type":"string","description":"Relative file path"}},"required":["path"]}`
 	classDepsSchema                 = `{"type":"object","properties":{"class":{"type":"string","description":"Class name or file path"}},"required":["class"]}`
-	externalContextSchema           = `{"type":"object","properties":{"query":{"type":"string","description":"Read-only context query"},"system":{"type":"string","description":"External system: notion or youtrack"}},"required":["query"]}`
+	externalContextSchema           = `{"type":"object","properties":{"query":{"type":"string","description":"Read-only context query"},"system":{"type":"string","description":"External system name as configured in archguard.yaml (e.g. notion, youtrack, jira)"}},"required":["query"]}`
 	reportViolationSchema           = `{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"number"},"severity":{"type":"string"},"category":{"type":"string"},"rule":{"type":"string"},"description":{"type":"string"},"suggestion":{"type":"string"}},"required":["file","severity","category","rule","description"]}`
 	msgToolDenied                   = "Tool call denied (%s)"
 	errUnknownTool                  = "unknown tool: %s"
@@ -60,15 +58,29 @@ const (
 	phpNamespaceSeparator           = "\\"
 	pathSeparator                   = "/"
 	emptyArgsJSON                   = "{}"
+	maxReadFileBytes                = 10 * 1024 * 1024 // 10 MB
 )
+
+type ConsentChecker interface {
+	Check(toolName string, args map[string]interface{}, budget int) string
+}
+
+type AuditLogger interface {
+	Record(toolName, args, decision string, size int, err error)
+}
+
+type ExternalSearcher interface {
+	Search(query string) (string, error)
+}
 
 type Resolver struct {
 	cfg         *config.Config
 	projectPath string
 	docsPath    string
 	extensions  []string
-	consent     *consent.Manager
-	auditLog    *audit.Log
+	consent     ConsentChecker
+	auditLog    AuditLogger
+	externals   map[string]ExternalSearcher
 	mu          sync.Mutex
 	violations  []models.Violation
 	nextID      int
@@ -80,10 +92,10 @@ type ToolDefinition struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 
-func NewResolver(cfg *config.Config, projectPath, docsPath string, exts []string, cm *consent.Manager, al *audit.Log) *Resolver {
+func NewResolver(cfg *config.Config, projectPath, docsPath string, exts []string, cm ConsentChecker, al AuditLogger, externals map[string]ExternalSearcher) *Resolver {
 	return &Resolver{
 		cfg: cfg, projectPath: projectPath, docsPath: docsPath,
-		extensions: exts, consent: cm, auditLog: al,
+		extensions: exts, consent: cm, auditLog: al, externals: externals,
 	}
 }
 
@@ -191,9 +203,12 @@ func (r *Resolver) projectStructure() (string, error) {
 			c.JSONKeyPath: rel, c.JSONKeyName: info.Name(), c.JSONKeyExtension: ext, c.JSONKeySize: info.Size(),
 		})
 	})
-	data, _ := json.MarshalIndent(map[string]interface{}{
+	data, err := json.MarshalIndent(map[string]interface{}{
 		c.JSONKeyRoot: r.projectPath, c.JSONKeyFiles: files, c.JSONKeyTotal: len(files),
 	}, "", c.JSONIndent)
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.KindInternal, "project structure", "failed to marshal result", err)
+	}
 	return string(data), nil
 }
 
@@ -230,6 +245,9 @@ func (r *Resolver) readFile(relPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if len(data) > maxReadFileBytes {
+		return "", apperrors.Validation(fmt.Sprintf("file too large (%d bytes); max %d bytes", len(data), maxReadFileBytes))
+	}
 	lines := strings.Split(string(data), "\n")
 	var sb strings.Builder
 	for i, line := range lines {
@@ -239,11 +257,14 @@ func (r *Resolver) readFile(relPath string) (string, error) {
 }
 
 func (r *Resolver) archRules() (string, error) {
-	data, _ := json.MarshalIndent(map[string]interface{}{
+	data, err := json.MarshalIndent(map[string]interface{}{
 		c.JSONKeyLayers: r.cfg.Layers, c.JSONKeyRules: r.cfg.Rules,
 		c.JSONKeyDomain: r.cfg.DomainContext.Domain, c.JSONKeyDomainDesc: r.cfg.DomainContext.Description,
 		c.JSONKeyDomainRules: r.cfg.DomainContext.Rules,
 	}, "", c.JSONIndent)
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.KindInternal, "arch rules", "failed to marshal result", err)
+	}
 	return string(data), nil
 }
 
@@ -259,10 +280,13 @@ func (r *Resolver) classDeps(classOrPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, _ := json.MarshalIndent(map[string]interface{}{
+	data, err := json.MarshalIndent(map[string]interface{}{
 		c.JSONKeyClass: classOrPath, c.JSONKeyFile: fp,
 		c.JSONKeyLayer: r.resolveLayer(classOrPath), c.JSONKeyDependencies: r.extractDeps(string(content)),
 	}, "", c.JSONIndent)
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.KindInternal, "class deps", "failed to marshal result", err)
+	}
 	return string(data), nil
 }
 
@@ -282,13 +306,17 @@ func (r *Resolver) externalContext(query, system string) (string, error) {
 		return "", apperrors.Validation(errExternalQueryRequired)
 	}
 	system = strings.ToLower(strings.TrimSpace(system))
-	if system == "" {
-		system = "notion"
+	if system == "" && len(r.externals) > 0 {
+		for k := range r.externals {
+			system = k
+			break
+		}
 	}
-	if !c.AllowedExternalSystems[system] {
+	searcher, ok := r.externals[system]
+	if !ok {
 		return "", apperrors.PermissionDenied(fmt.Sprintf(errExternalSystemNotAllowed, system))
 	}
-	return fmt.Sprintf(msgExternalContextUnavailable, query, system), nil
+	return searcher.Search(query)
 }
 
 func (r *Resolver) reportViolation(args map[string]interface{}) (string, error) {
@@ -385,7 +413,10 @@ func fmtArgs(args map[string]interface{}) string {
 	if args == nil {
 		return emptyArgsJSON
 	}
-	data, _ := json.Marshal(args)
+	data, err := json.Marshal(args)
+	if err != nil {
+		return emptyArgsJSON
+	}
 	return string(data)
 }
 

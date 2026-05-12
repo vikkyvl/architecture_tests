@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/archguard/project/client/audit"
 	"github.com/archguard/project/client/consent"
 	"github.com/archguard/project/client/detector"
+	"github.com/archguard/project/client/external"
 	"github.com/archguard/project/client/mcp"
 	"github.com/archguard/project/shared/apperrors"
 	"github.com/archguard/project/shared/config"
@@ -32,6 +35,27 @@ var llmRetryWaits = []time.Duration{
 	2 * time.Second,
 	5 * time.Second,
 	10 * time.Second,
+}
+
+type ToolRunner interface {
+	ListTools() []mcp.ToolDefinition
+	ExecuteTool(name string, args map[string]interface{}, budget int) (string, error)
+	GetViolations() []models.Violation
+	ListSourceFiles() []string
+}
+
+type ResultProcessor interface {
+	Process(res *models.AnalysisResult)
+	RenderJSON(res *models.AnalysisResult, path string) error
+	RenderMarkdown(res *models.AnalysisResult, path string) error
+}
+
+type ContextBuilder interface {
+	BuildSystemPrompt() string
+}
+
+type AuditReader interface {
+	Entries() []models.AuditEntry
 }
 
 type ReviewOptions struct {
@@ -65,17 +89,25 @@ func RunReview(opts ReviewOptions) error {
 
 	exts := detector.Extensions(cfg.Project.Language)
 
-	consentMgr := consent.NewManager(opts.Interactive, opts.ProjectPath)
+	externals, allowedSystems, closers := buildExternals(cfg.External)
+	defer func() {
+		for _, cl := range closers {
+			cl.Close()
+		}
+	}()
+
+	consentMgr := consent.NewManager(opts.Interactive, opts.ProjectPath, allowedSystems)
 	auditLog := audit.NewLog()
-	mcpResolver := mcp.NewResolver(cfg, opts.ProjectPath, opts.DocsPath, exts, consentMgr, auditLog)
+
+	var mcpResolver ToolRunner = mcp.NewResolver(cfg, opts.ProjectPath, opts.DocsPath, exts, consentMgr, auditLog, externals)
 
 	provider, err := llm.NewProvider(opts.Provider, opts.APIKey, opts.Model)
 	if err != nil {
 		return err
 	}
 
-	ctxResolver := contextresolver.NewResolver(cfg)
-	reviewer := result.NewReviewer()
+	var ctxResolver ContextBuilder = contextresolver.NewResolver(cfg)
+	var reviewer ResultProcessor = result.NewReviewer()
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, renderHeader("ArchGuard Analyzer"))
@@ -93,11 +125,13 @@ func RunReview(opts ReviewOptions) error {
 	fmt.Fprintln(os.Stderr)
 
 	systemPrompt := ctxResolver.BuildSystemPrompt()
-	apiTools := toAPITools(mcpResolver.ListTools())
+	apiTools := toAPITools(nonExternalTools(mcpResolver.ListTools()))
+
+	initialText := initialUserPrompt
 
 	messages := []llm.Message{
 		{Role: c.RoleUser, Content: []llm.ContentBlock{
-			llm.NewTextBlock(initialUserPrompt),
+			llm.NewTextBlock(initialText),
 		}},
 	}
 
@@ -147,12 +181,11 @@ func RunReview(opts ReviewOptions) error {
 				toolCalls++
 				remaining := opts.MaxToolCalls - toolCalls
 
-				var args map[string]interface{}
+				args := make(map[string]interface{})
 				if len(b.Input) > 0 {
-					json.Unmarshal(b.Input, &args)
-				}
-				if args == nil {
-					args = make(map[string]interface{})
+					if err := json.Unmarshal(b.Input, &args); err != nil {
+						fmt.Fprintf(os.Stderr, "warning: failed to parse tool args for %s: %v\n", b.Name, err)
+					}
 				}
 
 				res, execErr := mcpResolver.ExecuteTool(b.Name, args, remaining)
@@ -263,7 +296,117 @@ func toAPITools(defs []mcp.ToolDefinition) []llm.Tool {
 	return tools
 }
 
-func countFiles(r *mcp.Resolver) int {
+func nonExternalTools(defs []mcp.ToolDefinition) []mcp.ToolDefinition {
+	var tools []mcp.ToolDefinition
+	for _, d := range defs {
+		if d.Name == c.ToolGetExternalContext {
+			continue
+		}
+		tools = append(tools, d)
+	}
+	return tools
+}
+
+func promptExternalContext(systems []config.ExternalConfig, cfg *config.Config, resolver ToolRunner) string {
+	reader := bufio.NewReader(os.Stdin)
+	var results []string
+
+	for _, sys := range systems {
+		if !externalSystemReady(sys) {
+			continue
+		}
+		defaultQuery := defaultExternalQuery(cfg, sys.System)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, renderPanel("External context", []string{
+			renderKV("System", sys.System),
+			renderKV("Mode", "Force include before analysis"),
+			renderKV("Default query", defaultQuery),
+		}))
+		fmt.Fprintf(os.Stderr, "%s ", infoStyle.Render(fmt.Sprintf("Query for %s [Enter = default]:", sys.System)))
+		query, _ := reader.ReadString('\n')
+		query = strings.TrimSpace(query)
+		if query == "" {
+			query = defaultQuery
+		}
+		result, err := resolver.ExecuteTool(c.ToolGetExternalContext, map[string]interface{}{
+			c.ArgQuery:  query,
+			c.ArgSystem: sys.System,
+		}, c.FileCountBudget)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, renderNotice(warnBadgeStyle.Render("SKIP"), fmt.Sprintf("%s context unavailable: %v", sys.System, err)))
+			continue
+		}
+		fmt.Fprintln(os.Stderr, renderNotice(successBadgeStyle.Render("OK"), fmt.Sprintf("get_external_context %s %d chars", sys.System, len(result))))
+		fmt.Fprintln(os.Stderr, renderSubtlePanel(fmt.Sprintf("External context: %s", sys.System), []string{
+			valueStyle.Render(result),
+		}))
+		results = append(results, fmt.Sprintf("[%s]\n%s", sys.System, result))
+	}
+
+	return strings.Join(results, "\n\n")
+}
+
+func defaultExternalQuery(cfg *config.Config, system string) string {
+	var parts []string
+	if cfg.Project.Name != "" {
+		parts = append(parts, cfg.Project.Name)
+	}
+	if cfg.DomainContext.Domain != "" {
+		parts = append(parts, cfg.DomainContext.Domain)
+	}
+	if cfg.DomainContext.Description != "" {
+		parts = append(parts, cfg.DomainContext.Description)
+	}
+	if len(parts) == 0 {
+		return system
+	}
+	return strings.Join(parts, " ")
+}
+
+func writeExternalContextDebug(projectPath, content string) (string, error) {
+	path := filepath.Join(projectPath, "archguard-external-context.md")
+	body := "# ArchGuard External Context\n\n" + content + "\n"
+	return path, os.WriteFile(path, []byte(body), c.FilePermission)
+}
+
+func externalSystemReady(sys config.ExternalConfig) bool {
+	if sys.System == "" || len(sys.Command) == 0 || sys.SearchTool == "" || sys.SearchArg == "" {
+		return false
+	}
+	for _, value := range sys.Env {
+		if !expandedEnvValuePresent(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func expandedEnvValuePresent(value string) bool {
+	missing := false
+	expanded := os.Expand(value, func(name string) string {
+		env := os.Getenv(name)
+		if env == "" {
+			missing = true
+		}
+		return env
+	})
+	return !missing && strings.TrimSpace(expanded) != ""
+}
+
+func buildExternals(cfgs []config.ExternalConfig) (map[string]mcp.ExternalSearcher, map[string]bool, []*external.MCPClient) {
+	searchers := make(map[string]mcp.ExternalSearcher, len(cfgs))
+	allowed := make(map[string]bool, len(cfgs))
+	var closers []*external.MCPClient
+	for _, ec := range cfgs {
+		cl := external.NewMCPClient(ec)
+		searchers[ec.System] = cl
+		allowed[ec.System] = true
+		closers = append(closers, cl)
+	}
+	return searchers, allowed, closers
+}
+
+func countFiles(r ToolRunner) int {
 	res, _ := r.ExecuteTool(c.ToolGetProjectStructure, nil, c.FileCountBudget)
 	var p struct{ Total int }
 	json.Unmarshal([]byte(res), &p)

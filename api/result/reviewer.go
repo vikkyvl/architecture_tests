@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/archguard/project/shared/apperrors"
 	c "github.com/archguard/project/shared/constants"
 	"github.com/archguard/project/shared/models"
 )
@@ -47,7 +48,10 @@ func (r *Reviewer) Process(res *models.AnalysisResult) {
 }
 
 func (r *Reviewer) RenderJSON(res *models.AnalysisResult, path string) error {
-	data, _ := json.MarshalIndent(res, "", c.JSONIndent)
+	data, err := json.MarshalIndent(res, "", c.JSONIndent)
+	if err != nil {
+		return apperrors.Wrap(apperrors.KindInternal, "result", "failed to marshal result", err)
+	}
 	return os.WriteFile(path, data, c.FilePermission)
 }
 

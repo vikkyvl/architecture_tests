@@ -5,6 +5,7 @@ type Config struct {
 	Layers        []LayerConfig       `yaml:"layers"`
 	Rules         []RuleConfig        `yaml:"rules"`
 	DomainContext DomainContextConfig `yaml:"domain_context"`
+	External      []ExternalConfig    `yaml:"external,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -37,4 +38,12 @@ type DomainRule struct {
 	ID          string `yaml:"id"`
 	Description string `yaml:"description"`
 	Severity    string `yaml:"severity"`
+}
+
+type ExternalConfig struct {
+	System     string            `yaml:"system"`
+	Command    []string          `yaml:"command"`
+	Env        map[string]string `yaml:"env,omitempty"`
+	SearchTool string            `yaml:"search_tool"`
+	SearchArg  string            `yaml:"search_arg"`
 }

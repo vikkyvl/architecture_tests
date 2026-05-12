@@ -11,7 +11,10 @@ const (
 	systemPromptIntro          = "You are an expert software architecture reviewer.\n"
 	systemPromptGoal           = "Analyze the codebase and find architectural violations.\n\n"
 	systemPromptProcessHeader  = "Process:\n"
-	systemPromptProcessRules   = "1. Call get_architecture_rules to understand constraints.\n2. Call get_project_structure to see all source files.\n3. Read files with read_file and check dependencies with get_class_dependencies.\n4. Use get_documentation or get_external_context when domain context is needed.\n5. Call report_violation IMMEDIATELY when you find a violation.\n6. When done, stop and summarize.\n\n"
+	systemPromptProcessNoExt   = "1. Call get_architecture_rules to understand constraints.\n2. Call get_project_structure to see all source files.\n3. Read files with read_file and check dependencies with get_class_dependencies.\n4. Use get_documentation when domain context is needed.\n5. Call report_violation IMMEDIATELY when you find a violation.\n6. When done, stop and summarize.\n\n"
+	systemPromptProcessWithExt = "1. Call get_architecture_rules to understand constraints.\n2. Call get_project_structure to see all source files.\n3. Read files with read_file and check dependencies with get_class_dependencies.\n4. Use get_documentation when domain context is needed.\n5. Call report_violation IMMEDIATELY when you find a violation.\n6. When done, stop and summarize.\n\n"
+	systemPromptExternalHeader = "Configured external systems (optional; do not query unless explicitly requested):\n"
+	systemPromptExternalLine   = "- %s: external context may be available through system=\"%s\"\n"
 	systemPromptChecksHeader   = "What to check:\n"
 	systemPromptChecks         = "- Structural: verify each class only depends on allowed layers.\n- Semantic: analyze business logic, not just imports.\n- Domain: check domain-specific requirements.\n\n"
 	systemPromptProjectLine    = "Project: %s\n"
@@ -44,7 +47,18 @@ func (r *Resolver) BuildSystemPrompt() string {
 	sb.WriteString(systemPromptIntro)
 	sb.WriteString(systemPromptGoal)
 	sb.WriteString(systemPromptProcessHeader)
-	sb.WriteString(systemPromptProcessRules)
+
+	if len(r.cfg.External) > 0 {
+		sb.WriteString(systemPromptProcessWithExt)
+		sb.WriteString(systemPromptExternalHeader)
+		for _, ext := range r.cfg.External {
+			sb.WriteString(fmt.Sprintf(systemPromptExternalLine, ext.System, ext.System))
+		}
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString(systemPromptProcessNoExt)
+	}
+
 	sb.WriteString(systemPromptChecksHeader)
 	sb.WriteString(systemPromptChecks)
 
