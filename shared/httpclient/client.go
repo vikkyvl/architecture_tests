@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/archguard/project/shared/apperrors"
@@ -16,8 +15,11 @@ const (
 	errCreateRequest     = "failed to create request"
 	errRequestFailed     = "request failed"
 	errRateLimitExceeded = "rate limit exceeded after %d retries"
-	rateLimitWaitFormat  = "\n[rate limit] waiting %s...\n"
 )
+
+func sleepRateLimitHook(wait time.Duration) {
+	time.Sleep(wait)
+}
 
 type Client struct {
 	httpClient  *http.Client
@@ -38,15 +40,25 @@ type Response struct {
 }
 
 func New(timeout time.Duration, maxRetries int, retryWait time.Duration) *Client {
+	return NewWithRateLimitHook(timeout, maxRetries, retryWait, nil)
+}
+
+func NewWithRateLimitHook(timeout time.Duration, maxRetries int, retryWait time.Duration, hook func(time.Duration)) *Client {
+	if hook == nil {
+		hook = sleepRateLimitHook
+	}
 	return &Client{
 		httpClient:  &http.Client{Timeout: timeout},
 		maxRetries:  maxRetries,
 		retryWait:   retryWait,
-		onRateLimit: func(wait time.Duration) { fmt.Fprintf(os.Stderr, rateLimitWaitFormat, wait) },
+		onRateLimit: hook,
 	}
 }
 
 func (c *Client) WithRateLimitHook(fn func(time.Duration)) *Client {
+	if fn == nil {
+		fn = sleepRateLimitHook
+	}
 	c.onRateLimit = fn
 	return c
 }
@@ -76,7 +88,6 @@ func (c *Client) Post(cfg RequestConfig) (*Response, error) {
 		if attempt < c.maxRetries {
 			wait := c.retryWait * time.Duration(attempt+1)
 			c.onRateLimit(wait)
-			time.Sleep(wait)
 		}
 	}
 	return nil, apperrors.RateLimited(fmt.Sprintf(errRateLimitExceeded, c.maxRetries))

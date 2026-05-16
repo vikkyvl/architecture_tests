@@ -41,9 +41,11 @@ type DomainRule struct {
 }
 
 type ExternalConfig struct {
-	System     string            `yaml:"system"`
-	Command    []string          `yaml:"command"`
-	Env        map[string]string `yaml:"env,omitempty"`
-	SearchTool string            `yaml:"search_tool"`
-	SearchArg  string            `yaml:"search_arg"`
+	System        string            `yaml:"system"`
+	Command       []string          `yaml:"command"`
+	Env           map[string]string `yaml:"env,omitempty"`
+	SearchTool    string            `yaml:"search_tool"`
+	SearchArg     string            `yaml:"search_arg"`
+	QueryTemplate string            `yaml:"query_template,omitempty"`
+	DefaultQuery  string            `yaml:"default_query,omitempty"`
 }

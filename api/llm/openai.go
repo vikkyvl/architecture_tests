@@ -2,13 +2,14 @@ package llm
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/archguard/project/shared/apperrors"
 	c "github.com/archguard/project/shared/constants"
 	"github.com/archguard/project/shared/httpclient"
-	"fmt"
 )
 
 const (
@@ -73,6 +74,10 @@ type OpenAIClient struct {
 }
 
 func NewOpenAIClient(apiKey, model string) (*OpenAIClient, error) {
+	return NewOpenAIClientWithRateLimitHook(apiKey, model, nil)
+}
+
+func NewOpenAIClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*OpenAIClient, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv(c.EnvOpenAIKey)
 	}
@@ -84,7 +89,7 @@ func NewOpenAIClient(apiKey, model string) (*OpenAIClient, error) {
 	}
 	return &OpenAIClient{
 		apiKey: apiKey, model: model,
-		http: httpclient.New(c.OpenAITimeout, c.OpenAIMaxRetries, c.OpenAIRetryWait),
+		http: httpclient.NewWithRateLimitHook(c.OpenAITimeout, c.OpenAIMaxRetries, c.OpenAIRetryWait, rateLimitHook),
 	}, nil
 }
 
@@ -102,7 +107,7 @@ func (o *OpenAIClient) SendMessage(req Request) (*Response, error) {
 		URL:  c.OpenAIBaseURL,
 		Body: body,
 		Headers: map[string]string{
-			c.HTTPHeaderContentType:  c.HTTPContentTypeJSON,
+			c.HTTPHeaderContentType:   c.HTTPContentTypeJSON,
 			c.HTTPHeaderAuthorization: c.HTTPAuthBearer + o.apiKey,
 		},
 	})
@@ -163,8 +168,8 @@ func (o *OpenAIClient) assistantMessage(msg Message) oMessage {
 				args = openAIEmptyArgs
 			}
 			m.ToolCalls = append(m.ToolCalls, oToolCall{
-				ID:   b.ID,
-				Type: openAITypeFunction,
+				ID:       b.ID,
+				Type:     openAITypeFunction,
 				Function: oFunction{Name: b.Name, Arguments: args},
 			})
 		}

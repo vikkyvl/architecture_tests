@@ -20,10 +20,14 @@ import (
 )
 
 const (
-	uiWidth       = 76
-	labelWidth    = 15
-	progressWidth = 32
-	headerPad     = 1
+	uiWidth            = 76
+	labelWidth         = 15
+	progressWidth      = 32
+	headerPad          = 1
+	terminalClearLine  = "\r\x1b[2K"
+	rateLimitTick      = 120 * time.Millisecond
+	rateLimitTimeSlice = time.Second
+	linkMarker         = "↗"
 )
 
 var (
@@ -157,7 +161,11 @@ func renderDetection(r detector.DetectResult) string {
 
 	for _, lang := range langs {
 		count := r.FileCounts[lang]
-		rows = append(rows, renderKV(lang, fmt.Sprintf("%d files", count)))
+		value := fmt.Sprintf("%d files", count)
+		if conf, ok := r.Confidence[lang]; ok {
+			value = fmt.Sprintf("%d files (confidence %.0f%%)", count, conf*100)
+		}
+		rows = append(rows, renderKV(lang, value))
 	}
 	return renderPanel("Language detection", rows)
 }
@@ -200,10 +208,38 @@ func renderRetry(provider string, attempt, maxAttempts int, wait time.Duration, 
 	return fmt.Sprintf("%s %s", warnBadgeStyle.Render("RETRY"), mutedStyle.Render(detail))
 }
 
+func renderRateLimitWait(wait time.Duration) string {
+	return renderRateLimitWaitFrame(wait, "|")
+}
+
+func renderRateLimitWaitFrame(remaining time.Duration, frame string) string {
+	return fmt.Sprintf(
+		"%s %s %s",
+		warnBadgeStyle.Render("RATE LIMIT"),
+		infoStyle.Render(frame),
+		mutedStyle.Render(fmt.Sprintf("waiting %s before retry", roundUpDuration(remaining, rateLimitTimeSlice))),
+	)
+}
+
+func renderRateLimitResume(wait time.Duration) string {
+	return fmt.Sprintf("%s %s", warnBadgeStyle.Render("RETRY"), mutedStyle.Render(fmt.Sprintf("rate limit wait complete after %s", wait)))
+}
+
+func roundUpDuration(d, unit time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	if unit <= 0 || d%unit == 0 {
+		return d
+	}
+	return (d/unit + 1) * unit
+}
+
 func renderReportPaths(jsonPath, mdPath string) string {
+	arrow := mutedStyle.Render(linkMarker)
 	rows := []string{
-		renderKVRaw("JSON report", linkStyle.Render(jsonPath)),
-		renderKVRaw("Markdown", linkStyle.Render(mdPath)),
+		renderKVRaw("JSON report", arrow+" "+jsonPath),
+		renderKVRaw("Markdown", arrow+" "+mdPath),
 	}
 	panel := renderPanel("Report files", rows)
 	panel = insertFileLink(panel, jsonPath)
@@ -211,17 +247,26 @@ func renderReportPaths(jsonPath, mdPath string) string {
 	return panel
 }
 
-// insertFileLink wraps occurrences of path in the already-rendered panel with
-// an OSC 8 terminal hyperlink. Applied after lipgloss rendering to avoid
-// lipgloss mangling the non-SGR escape sequences.
 func insertFileLink(panel, path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
+	uri := fileURI(path)
+	if uri == "" {
 		return panel
 	}
-	uri := (&url.URL{Scheme: "file", Path: abs}).String()
-	linked := fmt.Sprintf("\x1b]8;;%s\a%s\x1b]8;;\a", uri, path)
+	styled := styledFileLinkText(path)
+	linked := fmt.Sprintf("\x1b]8;;%s\a%s\x1b]8;;\a", uri, styled)
 	return strings.Replace(panel, path, linked, 1)
+}
+
+func styledFileLinkText(path string) string {
+	return fmt.Sprintf("\x1b[1;4;38;5;51m%s\x1b[0m", path)
+}
+
+func fileURI(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	return (&url.URL{Scheme: "file", Path: abs}).String()
 }
 
 func renderResults(ar *models.AnalysisResult) string {

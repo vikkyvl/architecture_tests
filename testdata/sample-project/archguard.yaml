@@ -16,9 +16,28 @@ external:
   - system: notion
     command: ["npx", "-y", "@notionhq/notion-mcp-server"]
     env:
-      NOTION_API_TOKEN: "${NOTION_API_TOKEN}"
+      OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer ${NOTION_API_TOKEN}", "Notion-Version": "2022-06-28"}'
     search_tool: "API-post-search"
     search_arg: "query"
+  - system: jira
+    command: ["uvx", "mcp-atlassian"]
+    env:
+      JIRA_URL: "${JIRA_URL}"
+      JIRA_USERNAME: "${JIRA_USERNAME}"
+      JIRA_API_TOKEN: "${JIRA_API_TOKEN}"
+      JIRA_PROJECTS_FILTER: "${JIRA_PROJECT_KEY}"
+    search_tool: "jira_search"
+    search_arg: "jql"
+    query_template: 'text ~ "%s"'
+    default_query: "audit transactions payment"
+  - system: youtrack
+    command: ["npx", "-y", "@vitalyostanin/youtrack-mcp"]
+    env:
+      YOUTRACK_URL: "${YOUTRACK_URL}"
+      YOUTRACK_TOKEN: "${YOUTRACK_TOKEN}"
+    search_tool: "issues_search"
+    search_arg: "query"
+    default_query: "transaction"
 
 domain_context:
   domain: "FinTech"

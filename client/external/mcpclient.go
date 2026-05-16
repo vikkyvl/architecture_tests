@@ -15,18 +15,24 @@ import (
 )
 
 const (
-	mcpProtocolVersion  = "2024-11-05"
-	mcpClientName       = "archguard"
-	mcpClientVersion    = "0.1.0"
-	mcpContentTypeText  = "text"
-	errMCPNoCommand     = "mcp server %q: command is required"
-	errMCPStart         = "failed to start mcp server %q"
-	errMCPInit          = "failed to initialize mcp server %q"
-	errMCPWrite         = "failed to write to mcp server"
-	errMCPRead          = "failed to read from mcp server"
-	errMCPClosed        = "mcp server closed connection"
-	errMCPParseResponse = "failed to parse mcp response"
-	errMCPToolCall      = "mcp tool call failed"
+	mcpProtocolVersion       = "2024-11-05"
+	mcpClientName            = "archguard"
+	mcpClientVersion         = "0.1.0"
+	mcpContentTypeText       = "text"
+	mcpScannerMaxBytes      = 16 * 1024 * 1024
+	mcpStderrTailBytes      = 4 * 1024
+	envMCPStderrPassthrough = "ARCHGUARD_MCP_STDERR"
+	envMCPStderrEnabledOn   = "1"
+	envMCPStderrEnabledTrue = "true"
+	errMCPNoCommand         = "mcp server %q: command is required"
+	errMCPStart             = "failed to start mcp server %q"
+	errMCPInit              = "failed to initialize mcp server %q"
+	errMCPWrite             = "failed to write to mcp server"
+	errMCPRead              = "failed to read from mcp server"
+	errMCPClosed            = "mcp server closed connection"
+	errMCPParseResponse     = "failed to parse mcp response"
+	errMCPToolCall          = "mcp tool call failed"
+	mcpStderrTailSuffix     = " (server stderr tail: %s)"
 )
 
 type mcpRequest struct {
@@ -55,9 +61,51 @@ type MCPClient struct {
 	cmd      *exec.Cmd
 	stdin    io.WriteCloser
 	scanner  *bufio.Scanner
+	stderr   *stderrTail
 	mu       sync.Mutex
 	nextID   int64
 	tools    []string
+}
+
+// stderrTail keeps the last mcpStderrTailBytes of an MCP subprocess's stderr so
+// it can be surfaced in error messages. Third-party MCP servers (Notion,
+// mcp-atlassian) emit useful diagnostic banners on init failure (bad token,
+// missing dependency) that would otherwise be silently dropped when
+// ARCHGUARD_MCP_STDERR is off.
+type stderrTail struct {
+	mu  sync.Mutex
+	buf []byte
+	cap int
+}
+
+func newStderrTail(cap int) *stderrTail {
+	return &stderrTail{cap: cap, buf: make([]byte, 0, cap*2)}
+}
+
+func (s *stderrTail) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.buf = append(s.buf, p...)
+	if len(s.buf) > s.cap*2 {
+		s.buf = append(s.buf[:0], s.buf[len(s.buf)-s.cap:]...)
+	}
+	return len(p), nil
+}
+
+func (s *stderrTail) String() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.buf) <= s.cap {
+		return strings.TrimSpace(string(s.buf))
+	}
+	tail := s.buf[len(s.buf)-s.cap:]
+	if nl := strings.IndexByte(string(tail), '\n'); nl >= 0 && nl < len(tail)-1 {
+		tail = tail[nl+1:]
+	}
+	return strings.TrimSpace(string(tail))
 }
 
 func NewMCPClient(cfg config.ExternalConfig) *MCPClient {
@@ -71,8 +119,12 @@ func (c *MCPClient) Search(query string) (string, error) {
 	if len(c.tools) > 0 && !containsString(c.tools, c.cfg.SearchTool) {
 		return "", apperrors.ExternalService(fmt.Sprintf("mcp tool %q not found; available tools: %s", c.cfg.SearchTool, strings.Join(c.tools, ", ")))
 	}
+	value := query
+	if c.cfg.QueryTemplate != "" {
+		value = fmt.Sprintf(c.cfg.QueryTemplate, query)
+	}
 	result, err := c.callTool(c.cfg.SearchTool, map[string]interface{}{
-		c.cfg.SearchArg: query,
+		c.cfg.SearchArg: value,
 	})
 	if err != nil {
 		return "", err
@@ -117,7 +169,8 @@ func (c *MCPClient) start() error {
 	}
 	cmd := exec.Command(c.cfg.Command[0], c.cfg.Command[1:]...)
 	cmd.Env = buildEnv(c.cfg.Env)
-	cmd.Stderr = os.Stderr
+	c.stderr = newStderrTail(mcpStderrTailBytes)
+	cmd.Stderr = subprocessStderr(c.stderr)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -133,11 +186,12 @@ func (c *MCPClient) start() error {
 	c.cmd = cmd
 	c.stdin = stdin
 	c.scanner = bufio.NewScanner(stdout)
+	c.scanner.Buffer(make([]byte, 0, 64*1024), mcpScannerMaxBytes)
 
 	if err := c.initialize(); err != nil {
 		c.stdin.Close()
 		c.cmd.Process.Kill()
-		return apperrors.Wrap(apperrors.KindExternalService, "mcp", fmt.Sprintf(errMCPInit, c.cfg.System), err)
+		return apperrors.Wrap(apperrors.KindExternalService, "mcp", c.withStderrTail(fmt.Sprintf(errMCPInit, c.cfg.System)), err)
 	}
 	if tools, err := c.listTools(); err == nil {
 		c.tools = tools
@@ -206,9 +260,9 @@ func (c *MCPClient) rpc(method string, params interface{}) (json.RawMessage, err
 	}
 	if !c.scanner.Scan() {
 		if scanErr := c.scanner.Err(); scanErr != nil {
-			return nil, apperrors.Wrap(apperrors.KindExternalService, "mcp", errMCPRead, scanErr)
+			return nil, apperrors.Wrap(apperrors.KindExternalService, "mcp", c.withStderrTail(errMCPRead), scanErr)
 		}
-		return nil, apperrors.ExternalService(errMCPClosed)
+		return nil, apperrors.ExternalService(c.withStderrTail(errMCPClosed))
 	}
 	var resp mcpResponse
 	if err := json.Unmarshal(c.scanner.Bytes(), &resp); err != nil {
@@ -247,4 +301,28 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// subprocessStderr decides where MCP server stderr goes. By default only the
+// in-memory tail buffer receives writes — third-party servers (e.g.
+// mcp-atlassian via FastMCP, Notion's MCP server) print a banner plus
+// Rich-formatted logs on startup, which clutter the analyzer's own UI. Set
+// ARCHGUARD_MCP_STDERR=1 to also mirror stderr to the terminal when debugging
+// a misbehaving server. The tail buffer is captured regardless so init / read
+// failures can surface the last few lines in their apperror message.
+func subprocessStderr(tail io.Writer) io.Writer {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envMCPStderrPassthrough))) {
+	case envMCPStderrEnabledOn, envMCPStderrEnabledTrue:
+		return io.MultiWriter(os.Stderr, tail)
+	default:
+		return tail
+	}
+}
+
+func (c *MCPClient) withStderrTail(base string) string {
+	tail := c.stderr.String()
+	if tail == "" {
+		return base
+	}
+	return base + fmt.Sprintf(mcpStderrTailSuffix, tail)
 }

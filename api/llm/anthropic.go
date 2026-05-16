@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/archguard/project/shared/apperrors"
 	c "github.com/archguard/project/shared/constants"
@@ -22,6 +23,10 @@ type AnthropicClient struct {
 }
 
 func NewAnthropicClient(apiKey, model string) (*AnthropicClient, error) {
+	return NewAnthropicClientWithRateLimitHook(apiKey, model, nil)
+}
+
+func NewAnthropicClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*AnthropicClient, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv(c.EnvAnthropicKey)
 	}
@@ -33,7 +38,7 @@ func NewAnthropicClient(apiKey, model string) (*AnthropicClient, error) {
 	}
 	return &AnthropicClient{
 		apiKey: apiKey, model: model,
-		http: httpclient.New(c.AnthropicTimeout, c.AnthropicMaxRetries, c.AnthropicRetryWait),
+		http: httpclient.NewWithRateLimitHook(c.AnthropicTimeout, c.AnthropicMaxRetries, c.AnthropicRetryWait, rateLimitHook),
 	}, nil
 }
 

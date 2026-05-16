@@ -45,7 +45,6 @@ func TestReadFileBlocksSensitivePath(t *testing.T) {
 
 func TestReadFileSuccess(t *testing.T) {
 	dir := t.TempDir()
-	// pre-authorize read_file so non-interactive manager allows it
 	consentDir := filepath.Join(dir, ".archguard")
 	_ = os.MkdirAll(consentDir, 0700)
 	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),

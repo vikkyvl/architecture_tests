@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/archguard/project/shared/apperrors"
 	c "github.com/archguard/project/shared/constants"
@@ -25,6 +26,10 @@ type GeminiClient struct {
 }
 
 func NewGeminiClient(apiKey, model string) (*GeminiClient, error) {
+	return NewGeminiClientWithRateLimitHook(apiKey, model, nil)
+}
+
+func NewGeminiClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*GeminiClient, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv(c.EnvGeminiKey)
 	}
@@ -36,7 +41,7 @@ func NewGeminiClient(apiKey, model string) (*GeminiClient, error) {
 	}
 	return &GeminiClient{
 		apiKey: apiKey, model: model,
-		http: httpclient.New(c.GeminiTimeout, c.GeminiMaxRetries, c.GeminiRetryWait),
+		http: httpclient.NewWithRateLimitHook(c.GeminiTimeout, c.GeminiMaxRetries, c.GeminiRetryWait, rateLimitHook),
 	}, nil
 }
 

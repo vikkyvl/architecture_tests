@@ -1,16 +1,20 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
+	sitter "github.com/smacker/go-tree-sitter"
+
+	"github.com/archguard/project/client/detector"
 	"github.com/archguard/project/shared/apperrors"
 	"github.com/archguard/project/shared/config"
 	c "github.com/archguard/project/shared/constants"
@@ -31,34 +35,35 @@ const (
 var schemaEmpty = json.RawMessage(emptyObjectSchema)
 
 const (
-	readFileSchema                  = `{"type":"object","properties":{"path":{"type":"string","description":"Relative file path"}},"required":["path"]}`
-	classDepsSchema                 = `{"type":"object","properties":{"class":{"type":"string","description":"Class name or file path"}},"required":["class"]}`
-	externalContextSchema           = `{"type":"object","properties":{"query":{"type":"string","description":"Read-only context query"},"system":{"type":"string","description":"External system name as configured in archguard.yaml (e.g. notion, youtrack, jira)"}},"required":["query"]}`
-	reportViolationSchema           = `{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"number"},"severity":{"type":"string"},"category":{"type":"string"},"rule":{"type":"string"},"description":{"type":"string"},"suggestion":{"type":"string"}},"required":["file","severity","category","rule","description"]}`
-	msgToolDenied                   = "Tool call denied (%s)"
-	errUnknownTool                  = "unknown tool: %s"
-	errPathRequired                 = "path is required"
-	errRelativePathRequired         = "invalid path: must be relative"
-	errPathTraversal                = "path traversal not allowed"
-	errReadFile                     = "failed to read %s: %v"
-	errSensitivePath                = "blocked sensitive path: %s"
-	lineNumberFormat                = "%4d | %s\n"
-	errClassRequired                = "class is required"
-	errFileNotFound                 = "file not found for %q"
-	msgNoDocumentation              = "No project documentation was provided."
-	errExternalQueryRequired        = "query is required"
-	errExternalSystemNotAllowed     = "external system not allowed: %s"
-	msgExternalContextUnavailable   = "External context lookup for %q in %s was allowed but no connector is configured."
-	errViolationRequired            = "required: file, severity, rule, description"
-	violationIDFormat               = "v%03d"
-	msgViolationRecorded            = "Violation %s recorded: [%s] %s in %s:%d"
-	namespaceWildcardSuffix         = "\\*"
-	pathTraversalPrefix             = ".."
-	hiddenPathPrefix                = "."
-	phpNamespaceSeparator           = "\\"
-	pathSeparator                   = "/"
-	emptyArgsJSON                   = "{}"
-	maxReadFileBytes                = 10 * 1024 * 1024 // 10 MB
+	readFileSchema                = `{"type":"object","properties":{"path":{"type":"string","description":"Relative file path"}},"required":["path"]}`
+	classDepsSchema               = `{"type":"object","properties":{"class":{"type":"string","description":"Class name or file path"}},"required":["class"]}`
+	externalContextSchema         = `{"type":"object","properties":{"query":{"type":"string","description":"Read-only context query"},"system":{"type":"string","description":"External system name as configured in archguard.yaml (e.g. notion, youtrack, jira)"}},"required":["query"]}`
+	reportViolationSchema         = `{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"number"},"severity":{"type":"string"},"category":{"type":"string"},"rule":{"type":"string"},"description":{"type":"string"},"suggestion":{"type":"string"}},"required":["file","severity","category","rule","description"]}`
+	msgToolDenied                 = "Tool call denied (%s)"
+	errUnknownTool                = "unknown tool: %s"
+	errPathRequired               = "path is required"
+	errRelativePathRequired       = "invalid path: must be relative"
+	errPathTraversal              = "path traversal not allowed"
+	errReadFile                   = "failed to read %s: %v"
+	errSensitivePath              = "blocked sensitive path: %s"
+	lineNumberFormat              = "%4d | %s\n"
+	errClassRequired              = "class is required"
+	errFileNotFound               = "file not found for %q"
+	msgNoDocumentation            = "No project documentation was provided."
+	errExternalQueryRequired      = "query is required"
+	errExternalSystemNotAllowed   = "external system not allowed: %s"
+	msgExternalContextUnavailable = "External context lookup for %q in %s was allowed but no connector is configured."
+	errViolationRequired          = "required: file, severity, rule, description"
+	violationIDFormat             = "v%03d"
+	msgViolationRecorded          = "Violation %s recorded: [%s] %s in %s:%d"
+	namespaceWildcardSuffix       = "\\*"
+	pathTraversalPrefix           = ".."
+	hiddenPathPrefix              = "."
+	phpNamespaceSeparator         = "\\"
+	pathSeparator                 = "/"
+	emptyArgsJSON                 = "{}"
+	maxReadFileBytes              = 10 * 1024 * 1024
+	extractDepsParseTimeout       = 10 * time.Second
 )
 
 type ConsentChecker interface {
@@ -280,9 +285,10 @@ func (r *Resolver) classDeps(classOrPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	lang := c.ExtToLang[strings.TrimPrefix(filepath.Ext(fp), ".")]
 	data, err := json.MarshalIndent(map[string]interface{}{
 		c.JSONKeyClass: classOrPath, c.JSONKeyFile: fp,
-		c.JSONKeyLayer: r.resolveLayer(classOrPath), c.JSONKeyDependencies: r.extractDeps(string(content)),
+		c.JSONKeyLayer: r.resolveLayer(classOrPath), c.JSONKeyDependencies: r.extractDeps(string(content), lang),
 	}, "", c.JSONIndent)
 	if err != nil {
 		return "", apperrors.Wrap(apperrors.KindInternal, "class deps", "failed to marshal result", err)
@@ -389,22 +395,52 @@ func (r *Resolver) resolveLayer(name string) string {
 	return c.UnknownValue
 }
 
-var depPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?m)^use\s+(.+?)\s*;`),
-	regexp.MustCompile(`(?m)^from\s+(\S+)\s+import`),
-	regexp.MustCompile(`(?m)^import\s+(?:\{[^}]*\}|\w+)\s+from\s+['"](.+?)['"]`),
-}
-
-func (r *Resolver) extractDeps(source string) []map[string]string {
-	var deps []map[string]string
-	for _, re := range depPatterns {
-		for _, m := range re.FindAllStringSubmatch(source, -1) {
-			if len(m) > 1 {
-				deps = append(deps, map[string]string{
-					c.JSONKeyClass: m[1], c.JSONKeyLayer: r.resolveLayer(m[1]), c.JSONKeyType: c.JSONValueImport,
-				})
-			}
+// extractDeps walks a tree-sitter AST of the file content for `lang` and returns
+// one entry per detected import / use / require statement. Falls back to an
+// empty slice (not an error) for unknown languages, parse failures, or empty
+// source — those are normal outcomes the agentic loop should keep flowing past.
+//
+// The defer-recover guard is defensive: tree-sitter via CGo has been stable
+// across spec 0001 testing, but a panic in a per-language extractor would
+// otherwise tear down the whole analyzer mid-run.
+func (r *Resolver) extractDeps(source, lang string) (deps []map[string]string) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "extractDeps recovered from panic in lang=%s: %v\n", lang, rec)
+			deps = nil
 		}
+	}()
+
+	if lang == "" || source == "" {
+		return nil
+	}
+	grammar, ok := detector.LanguageGrammars[lang]
+	if !ok {
+		grammar = detector.ExtraExtensionGrammars[lang]
+	}
+	extractor, hasExtractor := languageImportExtractors[lang]
+	if grammar == nil || !hasExtractor {
+		return nil
+	}
+	parser := sitter.NewParser()
+	parser.SetLanguage(grammar)
+	ctx, cancel := context.WithTimeout(context.Background(), extractDepsParseTimeout)
+	defer cancel()
+	tree, err := parser.ParseCtx(ctx, nil, []byte(source))
+	if err != nil || tree == nil {
+		return nil
+	}
+	defer tree.Close()
+	root := tree.RootNode()
+	if root == nil {
+		return nil
+	}
+	for _, name := range extractor(root, []byte(source)) {
+		deps = append(deps, map[string]string{
+			c.JSONKeyClass: name,
+			c.JSONKeyLayer: r.resolveLayer(name),
+			c.JSONKeyType:  c.JSONValueImport,
+		})
 	}
 	return deps
 }
@@ -419,4 +455,3 @@ func fmtArgs(args map[string]interface{}) string {
 	}
 	return string(data)
 }
-
