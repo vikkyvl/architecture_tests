@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/archguard/project/shared/apperrors"
@@ -30,29 +29,34 @@ func NewGeminiClient(apiKey, model string) (*GeminiClient, error) {
 }
 
 func NewGeminiClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*GeminiClient, error) {
-	if apiKey == "" {
-		apiKey = os.Getenv(c.EnvGeminiKey)
-	}
-	if apiKey == "" {
-		return nil, apperrors.Validation(fmt.Sprintf(errAPIKeyRequired, c.EnvGeminiKey))
-	}
-	if model == "" {
-		model = c.GeminiModel
+	cfg, err := newProviderClientConfig(
+		apiKey, model, c.EnvGeminiKey, c.GeminiModel,
+		c.GeminiTimeout, c.GeminiMaxRetries, c.GeminiRetryWait,
+		rateLimitHook,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return &GeminiClient{
-		apiKey: apiKey, model: model,
-		http: httpclient.NewWithRateLimitHook(c.GeminiTimeout, c.GeminiMaxRetries, c.GeminiRetryWait, rateLimitHook),
+		apiKey: cfg.apiKey,
+		model:  cfg.model,
+		http:   cfg.http,
 	}, nil
 }
 
-func (g *GeminiClient) Name() string  { return c.ProviderGemini }
-func (g *GeminiClient) Model() string { return g.model }
+func (g *GeminiClient) Name() string {
+	return c.ProviderGemini
+}
+
+func (g *GeminiClient) Model() string {
+	return g.model
+}
 
 func (g *GeminiClient) SendMessage(req Request) (*Response, error) {
 	gr := g.toGemini(req)
 	body, err := json.Marshal(gr)
 	if err != nil {
-		return nil, apperrors.Wrap(apperrors.KindInternal, "gemini request", "failed to marshal request", err)
+		return nil, apperrors.Wrap(apperrors.KindInternal, operationGeminiRequest, errMarshalRequest, err)
 	}
 	url := fmt.Sprintf(geminiGenerateURLFormat, c.GeminiBaseURL, g.model, g.apiKey)
 
@@ -71,7 +75,7 @@ func (g *GeminiClient) SendMessage(req Request) (*Response, error) {
 
 	var out gResponse
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
-		return nil, apperrors.Wrap(apperrors.KindExternalService, "gemini response", errParseGemini, err)
+		return nil, apperrors.Wrap(apperrors.KindExternalService, operationGeminiResp, errParseGemini, err)
 	}
 	return g.fromGemini(out), nil
 }
@@ -117,16 +121,34 @@ type gResponse struct {
 }
 
 func (g *GeminiClient) toGemini(req Request) gRequest {
-	gr := gRequest{GenerationConfig: &gGenConfig{MaxOutputTokens: req.MaxTokens}}
+	gr := gRequest{
+		GenerationConfig: &gGenConfig{
+			MaxOutputTokens: req.MaxTokens,
+		},
+	}
 	if req.System != "" {
-		gr.SystemInstruction = &gContent{Parts: []gPart{{Text: req.System}}}
+		gr.SystemInstruction = &gContent{
+			Parts: []gPart{
+				{
+					Text: req.System,
+				},
+			},
+		}
 	}
 	if len(req.Tools) > 0 {
 		var decls []gFDecl
 		for _, t := range req.Tools {
-			decls = append(decls, gFDecl{Name: t.Name, Description: t.Description, Parameters: t.InputSchema})
+			decls = append(decls, gFDecl{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.InputSchema,
+			})
 		}
-		gr.Tools = []gToolSet{{FunctionDeclarations: decls}}
+		gr.Tools = []gToolSet{
+			{
+				FunctionDeclarations: decls,
+			},
+		}
 	}
 	for _, msg := range req.Messages {
 		role := c.RoleUser
@@ -138,7 +160,9 @@ func (g *GeminiClient) toGemini(req Request) gRequest {
 			switch b.Type {
 			case c.ContentTypeText:
 				if b.Text != "" {
-					parts = append(parts, gPart{Text: b.Text})
+					parts = append(parts, gPart{
+						Text: b.Text,
+					})
 				}
 			case c.ContentTypeToolUse:
 				var args map[string]interface{}
@@ -147,40 +171,62 @@ func (g *GeminiClient) toGemini(req Request) gRequest {
 						args = make(map[string]interface{})
 					}
 				}
-				parts = append(parts, gPart{FuncCall: &gFCall{Name: b.Name, Args: args}})
+				parts = append(parts, gPart{
+					FuncCall: &gFCall{
+						Name: b.Name,
+						Args: args,
+					},
+				})
 			case c.ContentTypeToolResult:
 				name := findToolName(req.Messages, b.ToolUseID)
-				parts = append(parts, gPart{FuncResp: &gFResult{
-					Name: name, Response: map[string]interface{}{geminiToolResultKey: b.Content},
-				}})
+				toolResponse := map[string]interface{}{
+					geminiToolResultKey: b.Content,
+				}
+				parts = append(parts, gPart{
+					FuncResp: &gFResult{
+						Name:     name,
+						Response: toolResponse,
+					},
+				})
 			}
 		}
 		if len(parts) > 0 {
-			gr.Contents = append(gr.Contents, gContent{Role: role, Parts: parts})
+			gr.Contents = append(gr.Contents, gContent{
+				Role:  role,
+				Parts: parts,
+			})
 		}
 	}
 	return gr
 }
 
 func (g *GeminiClient) fromGemini(gr gResponse) *Response {
-	resp := &Response{Role: c.RoleAssistant, StopReason: c.StopReasonEndTurn}
+	resp := &Response{
+		Role:       c.RoleAssistant,
+		StopReason: c.StopReasonEndTurn,
+	}
 	if len(gr.Candidates) == 0 {
 		return resp
 	}
 	hasCalls := false
 	for _, p := range gr.Candidates[0].Content.Parts {
 		if p.Text != "" {
-			resp.Content = append(resp.Content, ContentBlock{Type: c.ContentTypeText, Text: p.Text})
+			resp.Content = append(resp.Content, ContentBlock{
+				Type: c.ContentTypeText,
+				Text: p.Text,
+			})
 		}
 		if p.FuncCall != nil {
 			hasCalls = true
 			argBytes, err := json.Marshal(p.FuncCall.Args)
 			if err != nil {
-				argBytes = []byte("{}")
+				argBytes = []byte(c.EmptyJSONObject)
 			}
 			resp.Content = append(resp.Content, ContentBlock{
-				Type: c.ContentTypeToolUse, ID: fmt.Sprintf(geminiCallIDFormat, p.FuncCall.Name, len(resp.Content)),
-				Name: p.FuncCall.Name, Input: argBytes,
+				Type:  c.ContentTypeToolUse,
+				ID:    fmt.Sprintf(geminiCallIDFormat, p.FuncCall.Name, len(resp.Content)),
+				Name:  p.FuncCall.Name,
+				Input: argBytes,
 			})
 		}
 	}

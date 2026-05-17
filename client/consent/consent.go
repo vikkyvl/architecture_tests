@@ -1,7 +1,6 @@
 package consent
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +8,6 @@ import (
 	"strings"
 
 	c "github.com/archguard/project/shared/constants"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,17 +16,17 @@ const (
 	msgConsentTool        = "Tool"
 	msgConsentBudget      = "Budget"
 	msgConsentPattern     = "Pattern"
+	msgConsentRequired    = "Consent required"
+	msgCallsRemaining     = "%d calls remaining"
+	formatArgValue        = "%v"
 	choiceAllowOnce       = "a"
 	choiceAllowForSession = "s"
 	choiceAlwaysAllow     = "p"
 	choiceDeny            = "d"
 	choicePatternYes      = "y"
 	choicePatternNo       = "n"
-	mainMenuHelpHint      = "Use Up/Down and Enter, or press a/s/p/d. Esc denies."
-	patternMenuHelpHint   = "Use Up/Down and Enter, or press y/n. Esc declines."
-	patternMenuTitle      = "Save as project consent rule?"
-	patternMenuFooterHint = "To narrow this rule, edit .archguard/consent.yaml after saving."
 	recursiveGlobSuffix   = "/**"
+	emptyConsentLine      = ""
 	projectConsentPath    = ".archguard/consent.yaml"
 	userConsentPath       = ".config/archguard/consent.yaml"
 	consentFilePermission = 0o600
@@ -39,10 +36,6 @@ const (
 	patternSystemPrefix   = "system:"
 	defaultExternalSystem = "notion"
 	msgNonInteractiveDeny = "DENIED %s requires consent; run interactively or add a whitelist rule\n"
-	consentPanelWidth     = 76
-	consentLabelWidth     = 12
-	consentCursor         = ">"
-	consentNoCursor       = " "
 )
 
 type Decision = string
@@ -65,54 +58,12 @@ type consentFile struct {
 	Allowed []Rule `yaml:"allowed"`
 }
 
-var (
-	consentPanelStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("214")).
-				Padding(1, 2).
-				Width(consentPanelWidth)
-	consentTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("214"))
-	consentLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244")).
-				Width(consentLabelWidth)
-	consentValueStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
-	consentDangerStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("203"))
-	consentChoiceStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("81"))
-	consentSelectedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("16")).
-				Background(lipgloss.Color("81")).
-				Padding(0, 1)
-	consentHelpStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245"))
-)
-
-type consentOption struct {
-	key         string
-	label       string
-	description string
-}
-
-type consentChoiceModel struct {
-	rows      []string
-	options   []consentOption
-	cursor    int
-	choice    string
-	cancelKey string
-	helpHint  string
-}
-
-var _ tea.Model = consentChoiceModel{}
-
 func NewManager(interactive bool, projectPath string, allowedSystems map[string]bool) *Manager {
-	m := &Manager{interactive: interactive, projectPath: projectPath, allowedSystems: allowedSystems}
+	m := &Manager{
+		interactive:    interactive,
+		projectPath:    projectPath,
+		allowedSystems: allowedSystems,
+	}
 	m.projectAllowed = loadRules(filepath.Join(projectPath, projectConsentPath))
 	if home, err := os.UserHomeDir(); err == nil {
 		m.userAllowed = loadRules(filepath.Join(home, userConsentPath))
@@ -156,8 +107,8 @@ func (m *Manager) Check(toolName string, args map[string]interface{}, budget int
 
 func (m *Manager) prompt(toolName string, args map[string]interface{}, budget int) Decision {
 	rows := []string{
-		consentTitleStyle.Render("Consent required"),
-		"",
+		consentTitleStyle.Render(msgConsentRequired),
+		emptyConsentLine,
 		renderConsentKV(msgConsentTool, toolName),
 	}
 	argKeys := make([]string, 0, len(args))
@@ -166,22 +117,28 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 	}
 	sort.Strings(argKeys)
 	for _, k := range argKeys {
-		rows = append(rows, renderConsentKV(k, fmt.Sprintf("%v", args[k])))
+		rows = append(rows, renderConsentKV(k, fmt.Sprintf(formatArgValue, args[k])))
 	}
-	rows = append(rows, renderConsentKV(msgConsentBudget, fmt.Sprintf("%d calls remaining", budget)))
+	rows = append(rows, renderConsentKV(msgConsentBudget, fmt.Sprintf(msgCallsRemaining, budget)))
 
 	fmt.Fprintln(os.Stderr)
 	choice := runConsentMenu(rows)
 
 	switch choice {
 	case choiceAllowForSession:
-		m.sessionAllowed = append(m.sessionAllowed, Rule{Tool: toolName, Pattern: patternAll})
+		m.sessionAllowed = append(m.sessionAllowed, Rule{
+			Tool:    toolName,
+			Pattern: patternAll,
+		})
 		return c.DecisionUserAllowed
 	case choiceAlwaysAllow:
 		if !m.confirmDefaultPattern(toolName, args) {
 			return c.DecisionUserAllowed
 		}
-		rule := Rule{Tool: toolName, Pattern: defaultPattern(toolName, args)}
+		rule := Rule{
+			Tool:    toolName,
+			Pattern: defaultPattern(toolName, args),
+		}
 		m.projectAllowed = append(m.projectAllowed, rule)
 		_ = saveRules(filepath.Join(m.projectPath, projectConsentPath), m.projectAllowed)
 		return c.DecisionProjectAllow
@@ -190,121 +147,6 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 	default:
 		return c.DecisionUserAllowed
 	}
-}
-
-var mainConsentOptions = []consentOption{
-	{key: choiceAllowOnce, label: "Allow once", description: "Only this tool call"},
-	{key: choiceAllowForSession, label: "Allow session", description: "Same tool until review ends"},
-	{key: choiceAlwaysAllow, label: "Always allow", description: "Remember this pattern"},
-	{key: choiceDeny, label: "Deny", description: "Return denied tool result"},
-}
-
-var patternConfirmOptions = []consentOption{
-	{key: choicePatternYes, label: "Yes — save default pattern", description: "Persist rule to project consent"},
-	{key: choicePatternNo, label: "No — allow once only", description: "Don't save a rule"},
-}
-
-func runConsentMenu(rows []string) string {
-	return runMenu(rows, mainConsentOptions, choiceDeny, mainMenuHelpHint)
-}
-
-func runPatternConfirmMenu(rows []string) string {
-	return runMenu(rows, patternConfirmOptions, choicePatternNo, patternMenuHelpHint)
-}
-
-func runMenu(rows []string, options []consentOption, cancelKey, helpHint string) string {
-	model := consentChoiceModel{
-		rows:      rows,
-		options:   options,
-		cancelKey: cancelKey,
-		helpHint:  helpHint,
-	}
-	program := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr))
-	out, err := program.Run()
-	if err != nil {
-		return fallbackMenuChoice(rows, options, cancelKey)
-	}
-	final, ok := out.(consentChoiceModel)
-	if !ok || final.choice == "" {
-		return options[0].key
-	}
-	return final.choice
-}
-
-func (m consentChoiceModel) Init() tea.Cmd {
-	return nil
-}
-
-func (m consentChoiceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		key := msg.String()
-		switch key {
-		case "ctrl+c", "esc":
-			m.choice = m.cancelKey
-			return m, tea.Quit
-		case "up", "k", "left", "h":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j", "right", "l":
-			if m.cursor < len(m.options)-1 {
-				m.cursor++
-			}
-		case "enter":
-			m.choice = m.options[m.cursor].key
-			return m, tea.Quit
-		default:
-			for _, opt := range m.options {
-				if key == opt.key {
-					m.choice = key
-					return m, tea.Quit
-				}
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m consentChoiceModel) View() string {
-	var lines []string
-	lines = append(lines, m.rows...)
-	lines = append(lines, "")
-	for i, option := range m.options {
-		cursor := consentNoCursor
-		label := fmt.Sprintf("[%s] %s", option.key, option.label)
-		if i == m.cursor {
-			cursor = consentCursor
-			label = consentSelectedStyle.Render(label)
-		} else {
-			label = consentChoiceStyle.Render(label)
-		}
-		lines = append(lines, fmt.Sprintf("%s %s  %s", cursor, label, consentHelpStyle.Render(option.description)))
-	}
-	hint := m.helpHint
-	if hint == "" {
-		hint = mainMenuHelpHint
-	}
-	lines = append(lines, "", consentHelpStyle.Render(hint))
-	return consentPanelStyle.Render(strings.Join(lines, "\n")) + "\n"
-}
-
-func fallbackMenuChoice(rows []string, options []consentOption, defaultKey string) string {
-	fmt.Fprintln(os.Stderr, consentPanelStyle.Render(strings.Join(rows, "\n")))
-	var keys []string
-	for _, opt := range options {
-		keys = append(keys, fmt.Sprintf("[%s] %s", opt.key, opt.label))
-	}
-	fmt.Fprint(os.Stderr, consentChoiceStyle.Render(strings.Join(keys, "  ")+": "))
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	choice := strings.TrimSpace(strings.ToLower(input))
-	for _, opt := range options {
-		if choice == opt.key {
-			return opt.key
-		}
-	}
-	return defaultKey
 }
 
 func (m *Manager) confirmDefaultPattern(toolName string, args map[string]interface{}) bool {
@@ -318,14 +160,6 @@ func (m *Manager) confirmDefaultPattern(toolName string, args map[string]interfa
 	}
 	fmt.Fprintln(os.Stderr)
 	return runPatternConfirmMenu(rows) == choicePatternYes
-}
-
-func renderConsentKV(label, value string) string {
-	return consentLabelStyle.Render(label) + " " + consentValueStyle.Render(value)
-}
-
-func renderStatus(text string) string {
-	return consentPanelStyle.Render(text) + "\n"
 }
 
 func (m *Manager) isBlockedCall(toolName string, args map[string]interface{}) (bool, string) {
@@ -424,7 +258,9 @@ func saveRules(path string, rules []Rule) error {
 	if err := os.MkdirAll(filepath.Dir(path), consentDirPermission); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(consentFile{Allowed: rules})
+	data, err := yaml.Marshal(consentFile{
+		Allowed: rules,
+	})
 	if err != nil {
 		return err
 	}

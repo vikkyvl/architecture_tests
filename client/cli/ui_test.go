@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -9,21 +10,37 @@ import (
 	"time"
 )
 
-func TestRenderReportPathsUsesClickableFileLinks(t *testing.T) {
-	output := renderReportPaths("report.json", "report.md")
+const (
+	testJSONReportPath           = "report.json"
+	testMarkdownReportPath       = "report.md"
+	testRawRateLimitFallback     = "[rate limit]"
+	testExpectedRateLimitBadge   = badgeRateLimit
+	testExpectedRetryBadge       = badgeRetry
+	testExpectedRateLimitMessage = "expected rate limit badge"
+	testRawFallbackMessage       = "rate limit output should not use raw fallback text"
+	testTerminalRepaintMessage   = "expected animated rate limit output to repaint the same terminal line"
+	testAnimatedRateMessage      = "expected animated rate limit output to show rate limit state"
+	testAnimatedRetryMessage     = "expected animated rate limit output to finish with retry state"
+	testFileLinkFormat           = "\x1b]8;;%s\a%s\x1b]8;;\a"
+	testAbsPathFormat            = "abs path: %v"
+	testClickableLinkFormat      = "expected clickable link for %q in output"
+)
 
-	assertFileLink(t, output, "report.json")
-	assertFileLink(t, output, "report.md")
+func TestRenderReportPathsUsesClickableFileLinks(t *testing.T) {
+	output := renderReportPaths(testJSONReportPath, testMarkdownReportPath)
+
+	assertFileLink(t, output, testJSONReportPath)
+	assertFileLink(t, output, testMarkdownReportPath)
 }
 
 func TestRenderRateLimitWaitUsesUIBadge(t *testing.T) {
 	output := renderRateLimitWait(15 * time.Second)
 
-	if !strings.Contains(output, "RATE LIMIT") {
-		t.Fatal("expected rate limit badge")
+	if !strings.Contains(output, testExpectedRateLimitBadge) {
+		t.Fatal(testExpectedRateLimitMessage)
 	}
-	if strings.Contains(output, "[rate limit]") {
-		t.Fatal("rate limit output should not use raw fallback text")
+	if strings.Contains(output, testRawRateLimitFallback) {
+		t.Fatal(testRawFallbackMessage)
 	}
 }
 
@@ -34,13 +51,13 @@ func TestAnimateRateLimitWaitRendersSpinnerAndResume(t *testing.T) {
 
 	output := out.String()
 	if !strings.Contains(output, terminalClearLine) {
-		t.Fatal("expected animated rate limit output to repaint the same terminal line")
+		t.Fatal(testTerminalRepaintMessage)
 	}
-	if !strings.Contains(output, "RATE LIMIT") {
-		t.Fatal("expected animated rate limit output to show rate limit state")
+	if !strings.Contains(output, testExpectedRateLimitBadge) {
+		t.Fatal(testAnimatedRateMessage)
 	}
-	if !strings.Contains(output, "RETRY") {
-		t.Fatal("expected animated rate limit output to finish with retry state")
+	if !strings.Contains(output, testExpectedRetryBadge) {
+		t.Fatal(testAnimatedRetryMessage)
 	}
 }
 
@@ -48,9 +65,9 @@ func assertFileLink(t *testing.T, output, path string) {
 	t.Helper()
 
 	uri := testFileURI(t, path)
-	want := "\x1b]8;;" + uri + "\a" + styledFileLinkText(path) + "\x1b]8;;\a"
+	want := fmt.Sprintf(testFileLinkFormat, uri, styledFileLinkText(path))
 	if !strings.Contains(output, want) {
-		t.Fatalf("expected clickable link for %q in output", path)
+		t.Fatalf(testClickableLinkFormat, path)
 	}
 }
 
@@ -59,7 +76,10 @@ func testFileURI(t *testing.T, path string) string {
 
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		t.Fatalf("abs path: %v", err)
+		t.Fatalf(testAbsPathFormat, err)
 	}
-	return (&url.URL{Scheme: "file", Path: abs}).String()
+	return (&url.URL{
+		Scheme: fileURLScheme,
+		Path:   abs,
+	}).String()
 }

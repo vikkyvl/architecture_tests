@@ -1,21 +1,21 @@
 package review
 
 import (
-	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
 	"github.com/archguard/project/api/llm"
 	"github.com/archguard/project/client/mcp"
-	"github.com/archguard/project/shared/apperrors"
 	c "github.com/archguard/project/shared/constants"
 	"github.com/archguard/project/shared/models"
 )
 
 const (
-	defaultMaxRetries = 3
-	initialUserPrompt = "Analyze this project for architectural violations. Check every source file."
+	defaultMaxRetries        = 3
+	initialUserPrompt        = "Analyze this project for architectural violations. Check every source file."
+	contextSeparator         = "\n\n"
+	retryableOverloaded      = "overloaded"
+	retryableTempUnavailable = "temporarily unavailable"
 )
 
 var defaultRetryWaits = []time.Duration{
@@ -71,17 +71,36 @@ type RunResult struct {
 
 type noopObserver struct{}
 
-func (noopObserver) LimitReached(string)                          {}
-func (noopObserver) Retry(string, int, int, time.Duration, error) {}
-func (noopObserver) LLMText(string)                               {}
-func (noopObserver) ToolResult(int, string, int, error)           {}
-func (noopObserver) AnalysisComplete()                            {}
+func (noopObserver) LimitReached(string) {
+	return
+}
+
+func (noopObserver) Retry(string, int, int, time.Duration, error) {
+	return
+}
+
+func (noopObserver) LLMText(string) {
+	return
+}
+
+func (noopObserver) ToolResult(int, string, int, error) {
+	return
+}
+
+func (noopObserver) AnalysisComplete() {
+	return
+}
 
 func NewEngine(provider llm.Provider, tools ToolRunner, audit AuditReader, observer Observer) *Engine {
 	if observer == nil {
-		observer = noopObserver{}
+		observer = new(noopObserver)
 	}
-	return &Engine{provider: provider, tools: tools, audit: audit, observer: observer}
+	return &Engine{
+		provider: provider,
+		tools:    tools,
+		audit:    audit,
+		observer: observer,
+	}
 }
 
 func (e *Engine) Run(opts Options) (*RunResult, error) {
@@ -97,10 +116,15 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 
 	initialText := initialUserPrompt
 	if strings.TrimSpace(opts.InitialContext) != "" {
-		initialText += "\n\n" + opts.InitialContext
+		initialText += contextSeparator + opts.InitialContext
 	}
 	messages := []llm.Message{
-		{Role: c.RoleUser, Content: []llm.ContentBlock{llm.NewTextBlock(initialText)}},
+		{
+			Role: c.RoleUser,
+			Content: []llm.ContentBlock{
+				llm.NewTextBlock(initialText),
+			},
+		},
 	}
 	apiTools := toAPITools(nonExternalTools(e.tools.ListTools()))
 
@@ -110,12 +134,12 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 
 	for {
 		if toolCalls >= opts.MaxToolCalls {
-			e.observer.LimitReached("max tool calls")
+			e.observer.LimitReached(c.LimitReasonMaxToolCalls)
 			incomplete = true
 			break
 		}
 		if time.Now().After(deadline) {
-			e.observer.LimitReached("timeout")
+			e.observer.LimitReached(c.LimitReasonTimeout)
 			incomplete = true
 			break
 		}
@@ -128,7 +152,10 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 			return nil, err
 		}
 
-		messages = append(messages, llm.Message{Role: c.RoleAssistant, Content: resp.Content})
+		messages = append(messages, llm.Message{
+			Role:    c.RoleAssistant,
+			Content: resp.Content,
+		})
 		for _, b := range resp.Content {
 			if b.Type == c.ContentTypeText && b.Text != "" {
 				e.observer.LLMText(truncate(b.Text, opts.TextPreviewSize))
@@ -164,7 +191,10 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 			e.observer.ToolResult(toolCalls, b.Name, len(res), nil)
 			results = append(results, llm.NewToolResult(b.ID, res, false))
 		}
-		messages = append(messages, llm.Message{Role: c.RoleUser, Content: results})
+		messages = append(messages, llm.Message{
+			Role:    c.RoleUser,
+			Content: results,
+		})
 	}
 
 	auditEntries := e.audit.Entries()
@@ -179,58 +209,14 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 	}, nil
 }
 
-func (e *Engine) sendMessageWithRetry(req llm.Request, maxRetries int, waits []time.Duration) (*llm.Response, error) {
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		resp, err := e.provider.SendMessage(req)
-		if err == nil {
-			return resp, nil
-		}
-		lastErr = err
-		if attempt >= maxRetries || !isRetryableLLMError(err) {
-			break
-		}
-		wait := retryWait(attempt, waits)
-		e.observer.Retry(e.provider.Name(), attempt+1, maxRetries, wait, err)
-		time.Sleep(wait)
-	}
-	return nil, lastErr
-}
-
-func decodeToolArgs(block llm.ContentBlock) map[string]interface{} {
-	args := make(map[string]interface{})
-	if len(block.Input) == 0 {
-		return args
-	}
-	if err := json.Unmarshal(block.Input, &args); err != nil {
-		return map[string]interface{}{}
-	}
-	return args
-}
-
-func isRetryableLLMError(err error) bool {
-	var appErr *apperrors.Error
-	if !errors.As(err, &appErr) {
-		return false
-	}
-	if appErr.Kind == apperrors.KindRateLimited || appErr.Kind == apperrors.KindExternalService {
-		return true
-	}
-	msg := strings.ToLower(appErr.Error())
-	return strings.Contains(msg, "overloaded") || strings.Contains(msg, "temporarily unavailable")
-}
-
-func retryWait(attempt int, waits []time.Duration) time.Duration {
-	if attempt < len(waits) {
-		return waits[attempt]
-	}
-	return waits[len(waits)-1]
-}
-
 func toAPITools(defs []mcp.ToolDefinition) []llm.Tool {
 	tools := make([]llm.Tool, 0, len(defs))
 	for _, d := range defs {
-		tools = append(tools, llm.Tool{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema})
+		tools = append(tools, llm.Tool{
+			Name:        d.Name,
+			Description: d.Description,
+			InputSchema: d.InputSchema,
+		})
 	}
 	return tools
 }
@@ -244,48 +230,4 @@ func nonExternalTools(defs []mcp.ToolDefinition) []mcp.ToolDefinition {
 		tools = append(tools, d)
 	}
 	return tools
-}
-
-func extractAnalyzedModules(entries []models.AuditEntry) []string {
-	seen := make(map[string]bool)
-	var result []string
-	for _, e := range entries {
-		if e.ToolName != c.ToolReadFile || e.Error != "" {
-			continue
-		}
-		var args map[string]interface{}
-		if err := json.Unmarshal([]byte(e.Arguments), &args); err != nil {
-			continue
-		}
-		path, ok := args[c.ArgPath].(string)
-		if ok && path != "" && !seen[path] {
-			seen[path] = true
-			result = append(result, path)
-		}
-	}
-	return result
-}
-
-func skippedModules(incomplete bool, analyzed []string, sourceFiles []string) []string {
-	if !incomplete {
-		return nil
-	}
-	analyzedSet := make(map[string]bool, len(analyzed))
-	for _, f := range analyzed {
-		analyzedSet[f] = true
-	}
-	var skipped []string
-	for _, f := range sourceFiles {
-		if !analyzedSet[f] {
-			skipped = append(skipped, f)
-		}
-	}
-	return skipped
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + c.TruncationSuffix
 }

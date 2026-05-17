@@ -4,6 +4,15 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	c "github.com/archguard/project/shared/constants"
+)
+
+const (
+	formatLimitMaxTools = "Limit reached: max %d tool calls"
+	formatLimitTimeout  = "Limit reached: timeout %s"
+	formatLimitGeneric  = "Limit reached: %s"
+	msgAnalysisComplete = "Analysis complete"
 )
 
 type cliReviewObserver struct {
@@ -13,12 +22,12 @@ type cliReviewObserver struct {
 
 func (o cliReviewObserver) LimitReached(reason string) {
 	switch reason {
-	case "max tool calls":
-		fmt.Fprintln(os.Stderr, warnStyle.Render(fmt.Sprintf("Limit reached: max %d tool calls", o.maxToolCalls)))
-	case "timeout":
-		fmt.Fprintln(os.Stderr, warnStyle.Render(fmt.Sprintf("Limit reached: timeout %s", o.timeout)))
+	case c.LimitReasonMaxToolCalls:
+		fmt.Fprintln(os.Stderr, warnStyle.Render(fmt.Sprintf(formatLimitMaxTools, o.maxToolCalls)))
+	case c.LimitReasonTimeout:
+		fmt.Fprintln(os.Stderr, warnStyle.Render(fmt.Sprintf(formatLimitTimeout, o.timeout)))
 	default:
-		fmt.Fprintln(os.Stderr, warnStyle.Render("Limit reached: "+reason))
+		fmt.Fprintln(os.Stderr, warnStyle.Render(fmt.Sprintf(formatLimitGeneric, reason)))
 	}
 }
 
@@ -35,5 +44,5 @@ func (cliReviewObserver) ToolResult(callNumber int, toolName string, resultSize 
 }
 
 func (cliReviewObserver) AnalysisComplete() {
-	fmt.Fprintln(os.Stderr, renderStep("Analysis complete"))
+	fmt.Fprintln(os.Stderr, renderStep(msgAnalysisComplete))
 }

@@ -2,9 +2,7 @@ package llm
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/archguard/project/shared/apperrors"
@@ -27,23 +25,28 @@ func NewAnthropicClient(apiKey, model string) (*AnthropicClient, error) {
 }
 
 func NewAnthropicClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*AnthropicClient, error) {
-	if apiKey == "" {
-		apiKey = os.Getenv(c.EnvAnthropicKey)
-	}
-	if apiKey == "" {
-		return nil, apperrors.Validation(fmt.Sprintf(errAPIKeyRequired, c.EnvAnthropicKey))
-	}
-	if model == "" {
-		model = c.AnthropicModel
+	cfg, err := newProviderClientConfig(
+		apiKey, model, c.EnvAnthropicKey, c.AnthropicModel,
+		c.AnthropicTimeout, c.AnthropicMaxRetries, c.AnthropicRetryWait,
+		rateLimitHook,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return &AnthropicClient{
-		apiKey: apiKey, model: model,
-		http: httpclient.NewWithRateLimitHook(c.AnthropicTimeout, c.AnthropicMaxRetries, c.AnthropicRetryWait, rateLimitHook),
+		apiKey: cfg.apiKey,
+		model:  cfg.model,
+		http:   cfg.http,
 	}, nil
 }
 
-func (a *AnthropicClient) Name() string  { return c.ProviderAnthropic }
-func (a *AnthropicClient) Model() string { return a.model }
+func (a *AnthropicClient) Name() string {
+	return c.ProviderAnthropic
+}
+
+func (a *AnthropicClient) Model() string {
+	return a.model
+}
 
 func (a *AnthropicClient) SendMessage(req Request) (*Response, error) {
 	req.Model = a.model
@@ -52,7 +55,7 @@ func (a *AnthropicClient) SendMessage(req Request) (*Response, error) {
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, apperrors.Wrap(apperrors.KindInternal, "anthropic request", "failed to marshal request", err)
+		return nil, apperrors.Wrap(apperrors.KindInternal, operationAnthropicRequest, errMarshalRequest, err)
 	}
 
 	resp, err := a.http.Post(httpclient.RequestConfig{
@@ -74,7 +77,7 @@ func (a *AnthropicClient) SendMessage(req Request) (*Response, error) {
 
 	var out Response
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
-		return nil, apperrors.Wrap(apperrors.KindExternalService, "anthropic response", errParseAnthropic, err)
+		return nil, apperrors.Wrap(apperrors.KindExternalService, operationAnthropicResp, errParseAnthropic, err)
 	}
 	return &out, nil
 }

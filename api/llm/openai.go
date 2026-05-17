@@ -2,9 +2,7 @@ package llm
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/archguard/project/shared/apperrors"
@@ -17,7 +15,6 @@ const (
 	openAIFinishToolCall = "tool_calls"
 	openAIRoleTool       = "tool"
 	openAITypeFunction   = "function"
-	openAIEmptyArgs      = "{}"
 )
 
 type oRequest struct {
@@ -78,29 +75,34 @@ func NewOpenAIClient(apiKey, model string) (*OpenAIClient, error) {
 }
 
 func NewOpenAIClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*OpenAIClient, error) {
-	if apiKey == "" {
-		apiKey = os.Getenv(c.EnvOpenAIKey)
-	}
-	if apiKey == "" {
-		return nil, apperrors.Validation(fmt.Sprintf(errAPIKeyRequired, c.EnvOpenAIKey))
-	}
-	if model == "" {
-		model = c.OpenAIModel
+	cfg, err := newProviderClientConfig(
+		apiKey, model, c.EnvOpenAIKey, c.OpenAIModel,
+		c.OpenAITimeout, c.OpenAIMaxRetries, c.OpenAIRetryWait,
+		rateLimitHook,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return &OpenAIClient{
-		apiKey: apiKey, model: model,
-		http: httpclient.NewWithRateLimitHook(c.OpenAITimeout, c.OpenAIMaxRetries, c.OpenAIRetryWait, rateLimitHook),
+		apiKey: cfg.apiKey,
+		model:  cfg.model,
+		http:   cfg.http,
 	}, nil
 }
 
-func (o *OpenAIClient) Name() string  { return c.ProviderOpenAI }
-func (o *OpenAIClient) Model() string { return o.model }
+func (o *OpenAIClient) Name() string {
+	return c.ProviderOpenAI
+}
+
+func (o *OpenAIClient) Model() string {
+	return o.model
+}
 
 func (o *OpenAIClient) SendMessage(req Request) (*Response, error) {
 	or := o.toOpenAI(req)
 	body, err := json.Marshal(or)
 	if err != nil {
-		return nil, apperrors.Wrap(apperrors.KindInternal, "openai request", "failed to marshal request", err)
+		return nil, apperrors.Wrap(apperrors.KindInternal, operationOpenAIRequest, errMarshalRequest, err)
 	}
 
 	resp, err := o.http.Post(httpclient.RequestConfig{
@@ -121,16 +123,22 @@ func (o *OpenAIClient) SendMessage(req Request) (*Response, error) {
 
 	var out oResponse
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
-		return nil, apperrors.Wrap(apperrors.KindExternalService, "openai response", errParseOpenAI, err)
+		return nil, apperrors.Wrap(apperrors.KindExternalService, operationOpenAIResp, errParseOpenAI, err)
 	}
 	return o.fromOpenAI(out), nil
 }
 
 func (o *OpenAIClient) toOpenAI(req Request) oRequest {
-	or := oRequest{Model: o.model, MaxTokens: req.MaxTokens}
+	or := oRequest{
+		Model:     o.model,
+		MaxTokens: req.MaxTokens,
+	}
 
 	if req.System != "" {
-		or.Messages = append(or.Messages, oMessage{Role: "system", Content: req.System})
+		or.Messages = append(or.Messages, oMessage{
+			Role:    c.RoleSystem,
+			Content: req.System,
+		})
 	}
 
 	for _, t := range req.Tools {
@@ -157,7 +165,9 @@ func (o *OpenAIClient) toOpenAI(req Request) oRequest {
 }
 
 func (o *OpenAIClient) assistantMessage(msg Message) oMessage {
-	m := oMessage{Role: c.RoleAssistant}
+	m := oMessage{
+		Role: c.RoleAssistant,
+	}
 	for _, b := range msg.Content {
 		switch b.Type {
 		case c.ContentTypeText:
@@ -165,12 +175,15 @@ func (o *OpenAIClient) assistantMessage(msg Message) oMessage {
 		case c.ContentTypeToolUse:
 			args := string(b.Input)
 			if args == "" {
-				args = openAIEmptyArgs
+				args = c.EmptyJSONObject
 			}
 			m.ToolCalls = append(m.ToolCalls, oToolCall{
-				ID:       b.ID,
-				Type:     openAITypeFunction,
-				Function: oFunction{Name: b.Name, Arguments: args},
+				ID:   b.ID,
+				Type: openAITypeFunction,
+				Function: oFunction{
+					Name:      b.Name,
+					Arguments: args,
+				},
 			})
 		}
 	}
@@ -185,7 +198,10 @@ func (o *OpenAIClient) userMessages(msg Message) []oMessage {
 		switch b.Type {
 		case c.ContentTypeToolResult:
 			if textParts != "" {
-				out = append(out, oMessage{Role: c.RoleUser, Content: textParts})
+				out = append(out, oMessage{
+					Role:    c.RoleUser,
+					Content: textParts,
+				})
 				textParts = ""
 			}
 			out = append(out, oMessage{
@@ -199,13 +215,19 @@ func (o *OpenAIClient) userMessages(msg Message) []oMessage {
 	}
 
 	if textParts != "" {
-		out = append(out, oMessage{Role: c.RoleUser, Content: textParts})
+		out = append(out, oMessage{
+			Role:    c.RoleUser,
+			Content: textParts,
+		})
 	}
 	return out
 }
 
 func (o *OpenAIClient) fromOpenAI(or oResponse) *Response {
-	resp := &Response{Role: c.RoleAssistant, StopReason: c.StopReasonEndTurn}
+	resp := &Response{
+		Role:       c.RoleAssistant,
+		StopReason: c.StopReasonEndTurn,
+	}
 	if len(or.Choices) == 0 {
 		return resp
 	}
@@ -223,7 +245,7 @@ func (o *OpenAIClient) fromOpenAI(or oResponse) *Response {
 	for _, tc := range msg.ToolCalls {
 		args := json.RawMessage(tc.Function.Arguments)
 		if len(args) == 0 {
-			args = json.RawMessage(openAIEmptyArgs)
+			args = json.RawMessage(c.EmptyJSONObject)
 		}
 		resp.Content = append(resp.Content, ContentBlock{
 			Type:  c.ContentTypeToolUse,

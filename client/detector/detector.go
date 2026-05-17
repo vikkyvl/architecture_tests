@@ -106,19 +106,6 @@ func attribute(ctx context.Context, path string, info os.FileInfo, ext, candidat
 	}
 
 	score, named := parseStats(ctx, candidateGrammar, data)
-	// Trust the extension when the candidate grammar parses the file cleanly
-	// AND produces a non-trivial number of named nodes for the file size.
-	//
-	// Cross-grammar named-node comparisons are noisy with 19 registered languages
-	// (Elixir gives 38 named nodes on Ruby code while Ruby gives 29 — every grammar
-	// has its own tokenization granularity, so a pure "more named nodes" tiebreaker
-	// silently flips attribution between grammars that both happen to accept the file).
-	//
-	// The named-node minimum catches the dual hazard: PHP grammar accepts arbitrary
-	// non-PHP content as a single "text" node (named=2 for a Python file with a `.php`
-	// extension), giving a score=1.0 that would otherwise mask the mislabelling. By
-	// requiring `named >= minNamedNodesToTrust` for non-tiny files, we force a
-	// cross-grammar comparison whenever the candidate's parse is suspiciously shallow.
 	if score >= detectorAcceptScore && (info.Size() < smallFileBytes || named >= minNamedNodesToTrust) {
 		return candidate, score
 	}
@@ -234,7 +221,9 @@ func PrintResult(r DetectResult) {
 	for l, n := range r.FileCounts {
 		sorted = append(sorted, lc{l, n, r.Confidence[l]})
 	}
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].n > sorted[j].n })
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].n > sorted[j].n
+	})
 	for _, s := range sorted {
 		fmt.Fprintf(os.Stderr, detectedFileFormat, s.l, s.n, s.conf*100)
 	}

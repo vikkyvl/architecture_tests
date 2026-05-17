@@ -26,8 +26,13 @@ func (f *fakeProvider) SendMessage(req llm.Request) (*llm.Response, error) {
 	return resp, nil
 }
 
-func (f *fakeProvider) Model() string { return "fake-model" }
-func (f *fakeProvider) Name() string  { return "fake" }
+func (f *fakeProvider) Model() string {
+	return "fake-model"
+}
+
+func (f *fakeProvider) Name() string {
+	return "fake"
+}
 
 type fakeTools struct {
 	calls       []string
@@ -47,23 +52,38 @@ func (f *fakeTools) ExecuteTool(name string, args map[string]interface{}, budget
 	return "file contents", nil
 }
 
-func (f *fakeTools) GetViolations() []models.Violation { return f.violations }
-func (f *fakeTools) ListSourceFiles() []string         { return f.sourceFiles }
+func (f *fakeTools) GetViolations() []models.Violation {
+	return f.violations
+}
+
+func (f *fakeTools) ListSourceFiles() []string {
+	return f.sourceFiles
+}
 
 type fakeAudit struct {
 	entries []models.AuditEntry
 }
 
-func (f fakeAudit) Entries() []models.AuditEntry { return f.entries }
+func (f fakeAudit) Entries() []models.AuditEntry {
+	return f.entries
+}
 
 type captureObserver struct {
 	toolResults int
 	completed   bool
 }
 
-func (captureObserver) LimitReached(string)                          {}
-func (captureObserver) Retry(string, int, int, time.Duration, error) {}
-func (captureObserver) LLMText(string)                               {}
+func (captureObserver) LimitReached(string) {
+	return
+}
+
+func (captureObserver) Retry(string, int, int, time.Duration, error) {
+	return
+}
+
+func (captureObserver) LLMText(string) {
+	return
+}
 func (o *captureObserver) ToolResult(int, string, int, error) {
 	o.toolResults++
 }
@@ -73,21 +93,41 @@ func (o *captureObserver) AnalysisComplete() {
 
 func TestEngineRunsToolUseLoopAndBuildsResult(t *testing.T) {
 	toolInput := json.RawMessage(`{"path":"src/App.php"}`)
-	provider := &fakeProvider{responses: []*llm.Response{
-		{
-			StopReason: c.StopReasonToolUse,
-			Content: []llm.ContentBlock{{
-				Type: c.ContentTypeToolUse, ID: "tool-1",
-				Name: c.ToolReadFile, Input: toolInput,
-			}},
+	provider := &fakeProvider{
+		responses: []*llm.Response{
+			{
+				StopReason: c.StopReasonToolUse,
+				Content: []llm.ContentBlock{
+					{
+						Type:  c.ContentTypeToolUse,
+						ID:    "tool-1",
+						Name:  c.ToolReadFile,
+						Input: toolInput,
+					},
+				},
+			},
+			{
+				StopReason: c.StopReasonEndTurn,
+				Content: []llm.ContentBlock{
+					llm.NewTextBlock("done"),
+				},
+			},
 		},
-		{StopReason: c.StopReasonEndTurn, Content: []llm.ContentBlock{llm.NewTextBlock("done")}},
-	}}
-	tools := &fakeTools{sourceFiles: []string{"src/App.php", "src/Other.php"}}
-	audit := fakeAudit{entries: []models.AuditEntry{{
-		ToolName:  c.ToolReadFile,
-		Arguments: `{"path":"src/App.php"}`,
-	}}}
+	}
+	tools := &fakeTools{
+		sourceFiles: []string{
+			"src/App.php",
+			"src/Other.php",
+		},
+	}
+	audit := fakeAudit{
+		entries: []models.AuditEntry{
+			{
+				ToolName:  c.ToolReadFile,
+				Arguments: `{"path":"src/App.php"}`,
+			},
+		},
+	}
 	observer := &captureObserver{}
 
 	result, err := NewEngine(provider, tools, audit, observer).Run(Options{
@@ -112,10 +152,18 @@ func TestEngineRunsToolUseLoopAndBuildsResult(t *testing.T) {
 }
 
 func TestEngineDoesNotExposeExternalContextAsLLMTool(t *testing.T) {
-	provider := &fakeProvider{responses: []*llm.Response{{StopReason: c.StopReasonEndTurn}}}
-	tools := &fakeTools{}
+	provider := &fakeProvider{
+		responses: []*llm.Response{
+			{
+				StopReason: c.StopReasonEndTurn,
+			},
+		},
+	}
+	tools := new(fakeTools)
 
-	_, err := NewEngine(provider, tools, fakeAudit{}, nil).Run(Options{
+	var audit fakeAudit
+
+	_, err := NewEngine(provider, tools, audit, nil).Run(Options{
 		SystemPrompt: "system", MaxToolCalls: 5, Timeout: time.Minute,
 	})
 	if err != nil {

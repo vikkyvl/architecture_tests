@@ -24,9 +24,6 @@ import (
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
 
-// LanguageGrammars maps the canonical language name used in shared/constants.LangExtensions
-// to its tree-sitter grammar. Adding a language: import the grammar package and add one
-// entry here; no other detector code needs changing. Spec 0002 expanded this from 7 to 19.
 var LanguageGrammars = map[string]*sitter.Language{
 	"php":        php.GetLanguage(),
 	"typescript": typescript.GetLanguage(),
@@ -49,9 +46,6 @@ var LanguageGrammars = map[string]*sitter.Language{
 	"sql":        sql.GetLanguage(),
 }
 
-// ExtraExtensionGrammars maps secondary extensions (where one language has a dedicated
-// grammar variant — e.g. TSX vs TS) to their grammar. Used by the detector when the
-// extension is more specific than the canonical language entry.
 var ExtraExtensionGrammars = map[string]*sitter.Language{
 	"tsx": tsx.GetLanguage(),
 }

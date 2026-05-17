@@ -1,20 +1,11 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 	"sync"
-	"time"
 
-	sitter "github.com/smacker/go-tree-sitter"
-
-	"github.com/archguard/project/client/detector"
 	"github.com/archguard/project/shared/apperrors"
 	"github.com/archguard/project/shared/config"
 	c "github.com/archguard/project/shared/constants"
@@ -29,7 +20,7 @@ const (
 	toolDocumentationDescription    = "Returns project documentation."
 	toolExternalContextDescription  = "Fetches read-only context from allowed external systems."
 	toolReportViolationDescription  = "Records an architectural violation. Call IMMEDIATELY when found."
-	emptyObjectSchema               = `{"type":"object","properties":{}}`
+	emptyObjectSchema               = `{"type":"object","properties":` + c.EmptyJSONObject + `}`
 )
 
 var schemaEmpty = json.RawMessage(emptyObjectSchema)
@@ -45,8 +36,13 @@ const (
 	errRelativePathRequired       = "invalid path: must be relative"
 	errPathTraversal              = "path traversal not allowed"
 	errReadFile                   = "failed to read %s: %v"
+	errFileNotFoundDisplay        = "file not found: %s"
+	errFileTooLarge               = "file too large (%d bytes); max %d bytes"
 	errSensitivePath              = "blocked sensitive path: %s"
 	lineNumberFormat              = "%4d | %s\n"
+	lineSeparator                 = "\n"
+	warnSkipInaccessiblePath      = "warning: skipping inaccessible path: %v\n"
+	warnExtractDepsRecovered      = "extractDeps recovered from panic in lang=%s: %v\n"
 	errClassRequired              = "class is required"
 	errFileNotFound               = "file not found for %q"
 	msgNoDocumentation            = "No project documentation was provided."
@@ -56,14 +52,17 @@ const (
 	errViolationRequired          = "required: file, severity, rule, description"
 	violationIDFormat             = "v%03d"
 	msgViolationRecorded          = "Violation %s recorded: [%s] %s in %s:%d"
+	toolResultProjectStructure    = "project structure"
+	toolResultArchRules           = "arch rules"
+	toolResultClassDeps           = "class deps"
+	toolResultMarshalError        = "failed to marshal result"
+	operationReadFile             = "read file"
 	namespaceWildcardSuffix       = "\\*"
 	pathTraversalPrefix           = ".."
 	hiddenPathPrefix              = "."
 	phpNamespaceSeparator         = "\\"
 	pathSeparator                 = "/"
-	emptyArgsJSON                 = "{}"
 	maxReadFileBytes              = 10 * 1024 * 1024
-	extractDepsParseTimeout       = 10 * time.Second
 )
 
 type ConsentChecker interface {
@@ -99,8 +98,13 @@ type ToolDefinition struct {
 
 func NewResolver(cfg *config.Config, projectPath, docsPath string, exts []string, cm ConsentChecker, al AuditLogger, externals map[string]ExternalSearcher) *Resolver {
 	return &Resolver{
-		cfg: cfg, projectPath: projectPath, docsPath: docsPath,
-		extensions: exts, consent: cm, auditLog: al, externals: externals,
+		cfg:         cfg,
+		projectPath: projectPath,
+		docsPath:    docsPath,
+		extensions:  exts,
+		consent:     cm,
+		auditLog:    al,
+		externals:   externals,
 	}
 }
 
@@ -170,288 +174,13 @@ func (r *Resolver) dispatch(tool string, args map[string]interface{}) (string, e
 	}
 }
 
-func (r *Resolver) walkProjectFiles(fn func(rel string, info os.FileInfo)) {
-	filepath.Walk(r.projectPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping inaccessible path: %v\n", err)
-			return nil
-		}
-		if info.IsDir() {
-			if strings.HasPrefix(info.Name(), hiddenPathPrefix) {
-				return filepath.SkipDir
-			}
-			for _, d := range c.SkipDirs {
-				if info.Name() == d {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		rel, _ := filepath.Rel(r.projectPath, path)
-		if c.IsSensitivePath(rel) {
-			return nil
-		}
-		ext := strings.TrimPrefix(filepath.Ext(path), hiddenPathPrefix)
-		if len(r.extensions) > 0 && !slices.Contains(r.extensions, ext) {
-			return nil
-		}
-		fn(rel, info)
-		return nil
-	})
-}
-
-func (r *Resolver) projectStructure() (string, error) {
-	var files []map[string]interface{}
-	r.walkProjectFiles(func(rel string, info os.FileInfo) {
-		ext := strings.TrimPrefix(filepath.Ext(info.Name()), hiddenPathPrefix)
-		files = append(files, map[string]interface{}{
-			c.JSONKeyPath: rel, c.JSONKeyName: info.Name(), c.JSONKeyExtension: ext, c.JSONKeySize: info.Size(),
-		})
-	})
-	data, err := json.MarshalIndent(map[string]interface{}{
-		c.JSONKeyRoot: r.projectPath, c.JSONKeyFiles: files, c.JSONKeyTotal: len(files),
-	}, "", c.JSONIndent)
-	if err != nil {
-		return "", apperrors.Wrap(apperrors.KindInternal, "project structure", "failed to marshal result", err)
-	}
-	return string(data), nil
-}
-
-func readSourceFile(fullPath, displayPath string) ([]byte, error) {
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, apperrors.NotFound(fmt.Sprintf("file not found: %s", displayPath))
-		}
-		return nil, apperrors.Wrap(apperrors.KindInternal, "read file", fmt.Sprintf(errReadFile, displayPath, err), err)
-	}
-	return data, nil
-}
-
-func (r *Resolver) readFile(relPath string) (string, error) {
-	if relPath == "" {
-		return "", apperrors.Validation(errPathRequired)
-	}
-	clean := filepath.Clean(relPath)
-	if strings.HasPrefix(clean, pathTraversalPrefix) || filepath.IsAbs(clean) {
-		return "", apperrors.PermissionDenied(errRelativePathRequired)
-	}
-	if c.IsSensitivePath(clean) {
-		return "", apperrors.PermissionDenied(fmt.Sprintf(errSensitivePath, relPath))
-	}
-	full := filepath.Join(r.projectPath, clean)
-	absProj, _ := filepath.Abs(r.projectPath)
-	absFile, _ := filepath.Abs(full)
-	rel, err := filepath.Rel(absProj, absFile)
-	if err != nil || strings.HasPrefix(rel, pathTraversalPrefix) || filepath.IsAbs(rel) {
-		return "", apperrors.PermissionDenied(errPathTraversal)
-	}
-	data, err := readSourceFile(full, relPath)
-	if err != nil {
-		return "", err
-	}
-	if len(data) > maxReadFileBytes {
-		return "", apperrors.Validation(fmt.Sprintf("file too large (%d bytes); max %d bytes", len(data), maxReadFileBytes))
-	}
-	lines := strings.Split(string(data), "\n")
-	var sb strings.Builder
-	for i, line := range lines {
-		fmt.Fprintf(&sb, lineNumberFormat, i+1, line)
-	}
-	return sb.String(), nil
-}
-
-func (r *Resolver) archRules() (string, error) {
-	data, err := json.MarshalIndent(map[string]interface{}{
-		c.JSONKeyLayers: r.cfg.Layers, c.JSONKeyRules: r.cfg.Rules,
-		c.JSONKeyDomain: r.cfg.DomainContext.Domain, c.JSONKeyDomainDesc: r.cfg.DomainContext.Description,
-		c.JSONKeyDomainRules: r.cfg.DomainContext.Rules,
-	}, "", c.JSONIndent)
-	if err != nil {
-		return "", apperrors.Wrap(apperrors.KindInternal, "arch rules", "failed to marshal result", err)
-	}
-	return string(data), nil
-}
-
-func (r *Resolver) classDeps(classOrPath string) (string, error) {
-	if classOrPath == "" {
-		return "", apperrors.Validation(errClassRequired)
-	}
-	fp, err := r.resolveFile(classOrPath)
-	if err != nil {
-		return "", err
-	}
-	content, err := readSourceFile(filepath.Join(r.projectPath, fp), fp)
-	if err != nil {
-		return "", err
-	}
-	lang := c.ExtToLang[strings.TrimPrefix(filepath.Ext(fp), ".")]
-	data, err := json.MarshalIndent(map[string]interface{}{
-		c.JSONKeyClass: classOrPath, c.JSONKeyFile: fp,
-		c.JSONKeyLayer: r.resolveLayer(classOrPath), c.JSONKeyDependencies: r.extractDeps(string(content), lang),
-	}, "", c.JSONIndent)
-	if err != nil {
-		return "", apperrors.Wrap(apperrors.KindInternal, "class deps", "failed to marshal result", err)
-	}
-	return string(data), nil
-}
-
-func (r *Resolver) documentation() (string, error) {
-	if r.docsPath == "" {
-		return msgNoDocumentation, nil
-	}
-	data, err := readSourceFile(r.docsPath, r.docsPath)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func (r *Resolver) externalContext(query, system string) (string, error) {
-	if query == "" {
-		return "", apperrors.Validation(errExternalQueryRequired)
-	}
-	system = strings.ToLower(strings.TrimSpace(system))
-	if system == "" && len(r.externals) > 0 {
-		for k := range r.externals {
-			system = k
-			break
-		}
-	}
-	searcher, ok := r.externals[system]
-	if !ok {
-		return "", apperrors.PermissionDenied(fmt.Sprintf(errExternalSystemNotAllowed, system))
-	}
-	return searcher.Search(query)
-}
-
-func (r *Resolver) reportViolation(args map[string]interface{}) (string, error) {
-	file, _ := args[c.ArgFile].(string)
-	sev, _ := args[c.ArgSeverity].(string)
-	cat, _ := args[c.ArgCategory].(string)
-	rule, _ := args[c.ArgRule].(string)
-	desc, _ := args[c.ArgDescription].(string)
-	sug, _ := args[c.ArgSuggestion].(string)
-	var line int
-	if v, ok := args[c.ArgLine].(float64); ok {
-		line = int(v)
-	}
-	if file == "" || sev == "" || rule == "" || desc == "" {
-		return "", apperrors.Validation(errViolationRequired)
-	}
-
-	r.mu.Lock()
-	r.nextID++
-	id := fmt.Sprintf(violationIDFormat, r.nextID)
-	r.violations = append(r.violations, models.Violation{
-		ID: id, File: file, Line: line, Severity: sev,
-		Category: cat, Rule: rule, Description: desc, Suggestion: sug,
-	})
-	r.mu.Unlock()
-
-	return fmt.Sprintf(msgViolationRecorded, id, sev, rule, file, line), nil
-}
-
-func (r *Resolver) resolveFile(classOrPath string) (string, error) {
-	if strings.Contains(classOrPath, pathSeparator) {
-		clean := filepath.Clean(classOrPath)
-		if strings.HasPrefix(clean, pathTraversalPrefix) || filepath.IsAbs(clean) || c.IsSensitivePath(clean) {
-			return "", apperrors.PermissionDenied(fmt.Sprintf(errSensitivePath, classOrPath))
-		}
-		if _, err := os.Stat(filepath.Join(r.projectPath, clean)); err == nil {
-			return clean, nil
-		}
-	}
-	parts := strings.Split(classOrPath, phpNamespaceSeparator)
-	if len(parts) > 1 {
-		srcRoot := r.cfg.Project.SrcRoot
-		if srcRoot == "" {
-			srcRoot = c.DefaultSrcRoot
-		}
-		ext := c.LangFileExtensions[r.cfg.Project.Language]
-		if ext == "" {
-			ext = c.DefaultPHPFile
-		}
-		rel := filepath.Join(srcRoot, filepath.Join(parts[1:]...)) + ext
-		if c.IsSensitivePath(rel) {
-			return "", apperrors.PermissionDenied(fmt.Sprintf(errSensitivePath, rel))
-		}
-		if _, err := os.Stat(filepath.Join(r.projectPath, rel)); err == nil {
-			return rel, nil
-		}
-	}
-	return "", apperrors.NotFound(fmt.Sprintf(errFileNotFound, classOrPath))
-}
-
-func (r *Resolver) resolveLayer(name string) string {
-	for _, layer := range r.cfg.Layers {
-		for _, ns := range layer.Namespaces {
-			pattern := strings.TrimSuffix(strings.TrimSuffix(ns, namespaceWildcardSuffix), "*")
-			if strings.HasPrefix(name, pattern) {
-				return layer.Name
-			}
-		}
-	}
-	return c.UnknownValue
-}
-
-// extractDeps walks a tree-sitter AST of the file content for `lang` and returns
-// one entry per detected import / use / require statement. Falls back to an
-// empty slice (not an error) for unknown languages, parse failures, or empty
-// source — those are normal outcomes the agentic loop should keep flowing past.
-//
-// The defer-recover guard is defensive: tree-sitter via CGo has been stable
-// across spec 0001 testing, but a panic in a per-language extractor would
-// otherwise tear down the whole analyzer mid-run.
-func (r *Resolver) extractDeps(source, lang string) (deps []map[string]string) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			fmt.Fprintf(os.Stderr, "extractDeps recovered from panic in lang=%s: %v\n", lang, rec)
-			deps = nil
-		}
-	}()
-
-	if lang == "" || source == "" {
-		return nil
-	}
-	grammar, ok := detector.LanguageGrammars[lang]
-	if !ok {
-		grammar = detector.ExtraExtensionGrammars[lang]
-	}
-	extractor, hasExtractor := languageImportExtractors[lang]
-	if grammar == nil || !hasExtractor {
-		return nil
-	}
-	parser := sitter.NewParser()
-	parser.SetLanguage(grammar)
-	ctx, cancel := context.WithTimeout(context.Background(), extractDepsParseTimeout)
-	defer cancel()
-	tree, err := parser.ParseCtx(ctx, nil, []byte(source))
-	if err != nil || tree == nil {
-		return nil
-	}
-	defer tree.Close()
-	root := tree.RootNode()
-	if root == nil {
-		return nil
-	}
-	for _, name := range extractor(root, []byte(source)) {
-		deps = append(deps, map[string]string{
-			c.JSONKeyClass: name,
-			c.JSONKeyLayer: r.resolveLayer(name),
-			c.JSONKeyType:  c.JSONValueImport,
-		})
-	}
-	return deps
-}
-
 func fmtArgs(args map[string]interface{}) string {
 	if args == nil {
-		return emptyArgsJSON
+		return c.EmptyJSONObject
 	}
 	data, err := json.Marshal(args)
 	if err != nil {
-		return emptyArgsJSON
+		return c.EmptyJSONObject
 	}
 	return string(data)
 }

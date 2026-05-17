@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/archguard/project/client/external"
@@ -12,32 +13,56 @@ import (
 	c "github.com/archguard/project/shared/constants"
 )
 
+const (
+	externalPanelTitle          = "External context"
+	externalLabelSystem         = "System"
+	externalLabelMode           = "Mode"
+	externalLabelDefaultQuery   = "Default query"
+	externalModeForceInclude    = "Force include before analysis"
+	externalAskYesLabel         = "Yes - use default query"
+	externalAskNoLabel          = "No - skip this system"
+	externalUnnamedSystem       = "<unnamed>"
+	externalIncompleteReason    = "external: entry is incomplete"
+	externalMissingEnvPrefix    = "env vars not set: "
+	externalFormatSkipped       = "%s context skipped: %s"
+	externalFormatAsk           = "Pre-load %s context?"
+	externalFormatSkippedByUser = "%s context skipped by user"
+	externalFormatUnavailable   = "%s context unavailable: %v"
+	externalFormatLoaded        = "%s context loaded (%d chars)"
+	externalFormatDebugPanel    = "External context: %s"
+	externalFormatContextBlock  = "[%s]\n%s"
+	externalResultSeparator     = "\n\n"
+	externalQuerySeparator      = " "
+	externalEnvSeparator        = ", "
+)
+
 func promptExternalContext(systems []config.ExternalConfig, cfg *config.Config, resolver review.ToolRunner, interactive bool) string {
 	var results []string
 
 	for _, sys := range systems {
-		if !externalSystemReady(sys) {
+		if ready, reason := externalSystemReadiness(sys); !ready {
+			fmt.Fprintln(os.Stderr, renderNotice(warnBadgeStyle.Render(badgeSkip), fmt.Sprintf(externalFormatSkipped, systemLabel(sys), reason)))
 			continue
 		}
 		defaultQuery := defaultExternalQuery(cfg, sys)
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, renderPanel("External context", []string{
-			renderKV("System", sys.System),
-			renderKV("Mode", "Force include before analysis"),
-			renderKV("Default query", defaultQuery),
+		fmt.Fprintln(os.Stderr, renderPanel(externalPanelTitle, []string{
+			renderKV(externalLabelSystem, sys.System),
+			renderKV(externalLabelMode, externalModeForceInclude),
+			renderKV(externalLabelDefaultQuery, defaultQuery),
 		}))
 		if interactive {
 			confirmRows := []string{
-				renderKV("System", sys.System),
-				renderKV("Default query", defaultQuery),
+				renderKV(externalLabelSystem, sys.System),
+				renderKV(externalLabelDefaultQuery, defaultQuery),
 			}
 			if !askYesNo(
-				fmt.Sprintf("Pre-load %s context?", sys.System),
+				fmt.Sprintf(externalFormatAsk, sys.System),
 				confirmRows,
-				"Yes - use default query",
-				"No - skip this system",
+				externalAskYesLabel,
+				externalAskNoLabel,
 			) {
-				fmt.Fprintln(os.Stderr, renderNotice(warnBadgeStyle.Render("SKIP"), fmt.Sprintf("%s context skipped by user", sys.System)))
+				fmt.Fprintln(os.Stderr, renderNotice(warnBadgeStyle.Render(badgeSkip), fmt.Sprintf(externalFormatSkippedByUser, sys.System)))
 				continue
 			}
 		}
@@ -46,19 +71,19 @@ func promptExternalContext(systems []config.ExternalConfig, cfg *config.Config, 
 			c.ArgSystem: sys.System,
 		}, c.FileCountBudget)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, renderNotice(warnBadgeStyle.Render("SKIP"), fmt.Sprintf("%s context unavailable: %v", sys.System, err)))
+			fmt.Fprintln(os.Stderr, renderNotice(warnBadgeStyle.Render(badgeSkip), fmt.Sprintf(externalFormatUnavailable, sys.System, err)))
 			continue
 		}
-		fmt.Fprintln(os.Stderr, renderNotice(successBadgeStyle.Render("OK"), fmt.Sprintf("%s context loaded (%d chars)", sys.System, len(result))))
+		fmt.Fprintln(os.Stderr, renderNotice(successBadgeStyle.Render(badgeOK), fmt.Sprintf(externalFormatLoaded, sys.System, len(result))))
 		if debugExternalsEnabled() {
-			fmt.Fprintln(os.Stderr, renderSubtlePanel(fmt.Sprintf("External context: %s", sys.System), []string{
+			fmt.Fprintln(os.Stderr, renderSubtlePanel(fmt.Sprintf(externalFormatDebugPanel, sys.System), []string{
 				valueStyle.Render(result),
 			}))
 		}
-		results = append(results, fmt.Sprintf("[%s]\n%s", sys.System, result))
+		results = append(results, fmt.Sprintf(externalFormatContextBlock, sys.System, result))
 	}
 
-	return strings.Join(results, "\n\n")
+	return strings.Join(results, externalResultSeparator)
 }
 
 func defaultExternalQuery(cfg *config.Config, sys config.ExternalConfig) string {
@@ -78,43 +103,46 @@ func defaultExternalQuery(cfg *config.Config, sys config.ExternalConfig) string 
 	if len(parts) == 0 {
 		return sys.System
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, externalQuerySeparator)
 }
 
-// debugExternalsEnabled returns true when the user wants the raw content of
-// each external system's response printed to stderr alongside the OK status
-// line. Off by default to keep the analyzer's main UI clean.
 func debugExternalsEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(envDebugExternals))) {
-	case envDebugExternalsOn, envDebugExternalsTrue:
-		return true
-	default:
-		return false
-	}
+	return c.IsEnvTrue(envDebugExternals)
 }
 
-func externalSystemReady(sys config.ExternalConfig) bool {
+func externalSystemReadiness(sys config.ExternalConfig) (bool, string) {
 	if sys.System == "" || len(sys.Command) == 0 || sys.SearchTool == "" || sys.SearchArg == "" {
-		return false
+		return false, externalIncompleteReason
 	}
-	for _, value := range sys.Env {
-		if !expandedEnvValuePresent(value) {
-			return false
-		}
+	missing := missingEnvReferences(sys.Env)
+	if len(missing) > 0 {
+		return false, externalMissingEnvPrefix + strings.Join(missing, externalEnvSeparator)
 	}
-	return true
+	return true, ""
 }
 
-func expandedEnvValuePresent(value string) bool {
-	missing := false
-	expanded := os.Expand(value, func(name string) string {
-		env := os.Getenv(name)
-		if env == "" {
-			missing = true
-		}
-		return env
-	})
-	return !missing && strings.TrimSpace(expanded) != ""
+func missingEnvReferences(env map[string]string) []string {
+	seen := make(map[string]bool)
+	var missing []string
+	for _, value := range env {
+		os.Expand(value, func(name string) string {
+			v := os.Getenv(name)
+			if v == "" && !seen[name] {
+				seen[name] = true
+				missing = append(missing, name)
+			}
+			return v
+		})
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func systemLabel(sys config.ExternalConfig) string {
+	if sys.System != "" {
+		return sys.System
+	}
+	return externalUnnamedSystem
 }
 
 func buildExternals(cfgs []config.ExternalConfig) (map[string]mcp.ExternalSearcher, map[string]bool, []*external.MCPClient) {

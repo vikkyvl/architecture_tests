@@ -5,6 +5,10 @@ import (
 	"fmt"
 )
 
+const (
+	errorWithOperationFormat = "%s: %s"
+)
+
 type Kind string
 
 const (
@@ -30,7 +34,7 @@ func (e *Error) Error() string {
 	if e.Op == "" {
 		return e.Message
 	}
-	return fmt.Sprintf("%s: %s", e.Op, e.Message)
+	return fmt.Sprintf(errorWithOperationFormat, e.Op, e.Message)
 }
 
 func (e *Error) Unwrap() error {
@@ -41,11 +45,19 @@ func (e *Error) Unwrap() error {
 }
 
 func New(kind Kind, message string) *Error {
-	return &Error{Kind: kind, Message: message}
+	return &Error{
+		Kind:    kind,
+		Message: message,
+	}
 }
 
 func Wrap(kind Kind, op, message string, err error) *Error {
-	return &Error{Kind: kind, Op: op, Message: message, Err: err}
+	return &Error{
+		Kind:    kind,
+		Op:      op,
+		Message: message,
+		Err:     err,
+	}
 }
 
 func Validation(message string) *Error {

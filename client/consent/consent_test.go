@@ -8,9 +8,14 @@ import (
 )
 
 func TestCheckBlocksSensitiveReadFile(t *testing.T) {
-	m := &Manager{interactive: true}
+	m := &Manager{
+		interactive: true,
+	}
 
-	decision := m.Check(c.ToolReadFile, map[string]interface{}{c.ArgPath: ".env"}, 10)
+	args := map[string]interface{}{
+		c.ArgPath: ".env",
+	}
+	decision := m.Check(c.ToolReadFile, args, 10)
 
 	if decision != c.DecisionBlocked {
 		t.Fatalf("expected %q, got %q", c.DecisionBlocked, decision)
@@ -19,11 +24,19 @@ func TestCheckBlocksSensitiveReadFile(t *testing.T) {
 
 func TestCheckAllowsProjectWhitelistBeforePrompt(t *testing.T) {
 	m := &Manager{
-		interactive:    true,
-		projectAllowed: []Rule{{Tool: c.ToolReadFile, Pattern: "glob:src/**"}},
+		interactive: true,
+		projectAllowed: []Rule{
+			{
+				Tool:    c.ToolReadFile,
+				Pattern: "glob:src/**",
+			},
+		},
 	}
 
-	decision := m.Check(c.ToolReadFile, map[string]interface{}{c.ArgPath: "src/App/Service.php"}, 10)
+	args := map[string]interface{}{
+		c.ArgPath: "src/App/Service.php",
+	}
+	decision := m.Check(c.ToolReadFile, args, 10)
 
 	if decision != c.DecisionProjectAllow {
 		t.Fatalf("expected %q, got %q", c.DecisionProjectAllow, decision)
@@ -31,9 +44,11 @@ func TestCheckAllowsProjectWhitelistBeforePrompt(t *testing.T) {
 }
 
 func TestCheckDeniesConsentRequiredToolWhenNonInteractive(t *testing.T) {
-	m := &Manager{interactive: false}
+	m := &Manager{
+		interactive: false,
+	}
 
-	decision := m.Check(c.ToolGetDocumentation, map[string]interface{}{}, 10)
+	decision := m.Check(c.ToolGetDocumentation, make(map[string]interface{}), 10)
 
 	if decision != c.DecisionUserDenied {
 		t.Fatalf("expected %q, got %q", c.DecisionUserDenied, decision)
@@ -41,7 +56,9 @@ func TestCheckDeniesConsentRequiredToolWhenNonInteractive(t *testing.T) {
 }
 
 func TestCheckBlocksUnknownExternalSystem(t *testing.T) {
-	m := &Manager{interactive: true}
+	m := &Manager{
+		interactive: true,
+	}
 
 	decision := m.Check(c.ToolGetExternalContext, map[string]interface{}{
 		c.ArgQuery:  "ADR auth",
@@ -55,8 +72,10 @@ func TestCheckBlocksUnknownExternalSystem(t *testing.T) {
 
 func TestCheckAutoApprovesConfiguredExternalSystem(t *testing.T) {
 	m := &Manager{
-		interactive:    false,
-		allowedSystems: map[string]bool{"notion": true},
+		interactive: false,
+		allowedSystems: map[string]bool{
+			"notion": true,
+		},
 	}
 
 	decision := m.Check(c.ToolGetExternalContext, map[string]interface{}{
@@ -72,11 +91,15 @@ func TestCheckAutoApprovesConfiguredExternalSystem(t *testing.T) {
 func TestConsentViewLeavesTrailingLineForBubbleTeaShutdown(t *testing.T) {
 	model := consentChoiceModel{
 		rows: []string{
-			consentTitleStyle.Render("Consent required"),
+			consentTitleStyle.Render(msgConsentRequired),
 			renderConsentKV(msgConsentTool, c.ToolReadFile),
 		},
 		options: []consentOption{
-			{key: choiceAllowOnce, label: "Allow once", description: "Only this tool call"},
+			{
+				key:         choiceAllowOnce,
+				label:       "Allow once",
+				description: "Only this tool call",
+			},
 		},
 	}
 

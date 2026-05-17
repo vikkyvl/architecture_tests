@@ -14,7 +14,10 @@ import (
 const (
 	errCreateRequest     = "failed to create request"
 	errRequestFailed     = "request failed"
+	errReadResponseBody  = "failed to read response body"
 	errRateLimitExceeded = "rate limit exceeded after %d retries"
+	operationHTTPRequest = "http request"
+	operationHTTPResp    = "http response"
 )
 
 func sleepRateLimitHook(wait time.Duration) {
@@ -67,23 +70,26 @@ func (c *Client) Post(cfg RequestConfig) (*Response, error) {
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		req, err := http.NewRequest(constants.HTTPMethodPost, cfg.URL, bytes.NewReader(cfg.Body))
 		if err != nil {
-			return nil, apperrors.Wrap(apperrors.KindInternal, "http request", errCreateRequest, err)
+			return nil, apperrors.Wrap(apperrors.KindInternal, operationHTTPRequest, errCreateRequest, err)
 		}
 		for key, val := range cfg.Headers {
 			req.Header.Set(key, val)
 		}
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, apperrors.Wrap(apperrors.KindExternalService, "http request", errRequestFailed, err)
+			return nil, apperrors.Wrap(apperrors.KindExternalService, operationHTTPRequest, errRequestFailed, err)
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if readErr != nil {
-			return nil, apperrors.Wrap(apperrors.KindExternalService, "http response", "failed to read response body", readErr)
+			return nil, apperrors.Wrap(apperrors.KindExternalService, operationHTTPResp, errReadResponseBody, readErr)
 		}
 
 		if resp.StatusCode != http.StatusTooManyRequests {
-			return &Response{StatusCode: resp.StatusCode, Body: body}, nil
+			return &Response{
+				StatusCode: resp.StatusCode,
+				Body:       body,
+			}, nil
 		}
 		if attempt < c.maxRetries {
 			wait := c.retryWait * time.Duration(attempt+1)

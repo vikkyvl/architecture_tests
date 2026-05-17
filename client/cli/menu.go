@@ -16,6 +16,24 @@ const (
 	yesNoNoCursor    = " "
 	yesNoMenuHint    = "Arrows or y/n to choose, Enter to confirm, Esc cancels."
 	yesNoMenuPadding = 76
+	yesNoKeyUpperY   = "Y"
+	yesNoKeyUpperN   = "N"
+	yesNoKeyCtrlC    = "ctrl+c"
+	yesNoKeyEsc      = "esc"
+	yesNoKeyUp       = "up"
+	yesNoKeyDown     = "down"
+	yesNoKeyLeft     = "left"
+	yesNoKeyRight    = "right"
+	yesNoKeyK        = "k"
+	yesNoKeyJ        = "j"
+	yesNoKeyH        = "h"
+	yesNoKeyL        = "l"
+	yesNoKeyEnter    = "enter"
+	yesNoEmptyLine   = ""
+	yesNoLineBreak   = "\n"
+	yesNoHintGap     = "  "
+	yesNoFormatLabel = "[%s] %s"
+	yesNoFormatRow   = "%s %s%s"
 )
 
 var (
@@ -32,7 +50,7 @@ var (
 	yesNoChoiceStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("81"))
-	yesNoHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	yesNoHelpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	yesNoTitleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("81"))
@@ -52,32 +70,34 @@ type yesNoModel struct {
 	choice  string
 }
 
-var _ tea.Model = yesNoModel{}
+var _ tea.Model = (*yesNoModel)(nil)
 
-func (m yesNoModel) Init() tea.Cmd { return nil }
+func (m yesNoModel) Init() tea.Cmd {
+	return nil
+}
 
 func (m yesNoModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case yesNoKeyCtrlC, yesNoKeyEsc:
 			m.choice = yesNoChoiceNo
 			return m, tea.Quit
-		case "up", "k", "left", "h":
+		case yesNoKeyUp, yesNoKeyK, yesNoKeyLeft, yesNoKeyH:
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "down", "j", "right", "l":
+		case yesNoKeyDown, yesNoKeyJ, yesNoKeyRight, yesNoKeyL:
 			if m.cursor < len(m.options)-1 {
 				m.cursor++
 			}
-		case "enter":
+		case yesNoKeyEnter:
 			m.choice = m.options[m.cursor].key
 			return m, tea.Quit
-		case yesNoChoiceYes, "Y":
+		case yesNoChoiceYes, yesNoKeyUpperY:
 			m.choice = yesNoChoiceYes
 			return m, tea.Quit
-		case yesNoChoiceNo, "N":
+		case yesNoChoiceNo, yesNoKeyUpperN:
 			m.choice = yesNoChoiceNo
 			return m, tea.Quit
 		}
@@ -89,27 +109,27 @@ func (m yesNoModel) View() string {
 	var lines []string
 	lines = append(lines, yesNoTitleStyle.Render(m.title))
 	if len(m.rows) > 0 {
-		lines = append(lines, "")
+		lines = append(lines, yesNoEmptyLine)
 		lines = append(lines, m.rows...)
 	}
-	lines = append(lines, "")
+	lines = append(lines, yesNoEmptyLine)
 	for i, opt := range m.options {
 		cursor := yesNoNoCursor
-		label := fmt.Sprintf("[%s] %s", opt.key, opt.label)
+		label := fmt.Sprintf(yesNoFormatLabel, opt.key, opt.label)
 		if i == m.cursor {
 			cursor = yesNoCursor
 			label = yesNoSelectedStyle.Render(label)
 		} else {
 			label = yesNoChoiceStyle.Render(label)
 		}
-		hint := ""
+		hint := yesNoEmptyLine
 		if opt.hint != "" {
-			hint = "  " + yesNoHelpStyle.Render(opt.hint)
+			hint = yesNoHintGap + yesNoHelpStyle.Render(opt.hint)
 		}
-		lines = append(lines, fmt.Sprintf("%s %s%s", cursor, label, hint))
+		lines = append(lines, fmt.Sprintf(yesNoFormatRow, cursor, label, hint))
 	}
-	lines = append(lines, "", yesNoHelpStyle.Render(yesNoMenuHint))
-	return yesNoPanelStyle.Render(strings.Join(lines, "\n")) + "\n"
+	lines = append(lines, yesNoEmptyLine, yesNoHelpStyle.Render(yesNoMenuHint))
+	return yesNoPanelStyle.Render(strings.Join(lines, yesNoLineBreak)) + yesNoLineBreak
 }
 
 func askYesNo(title string, rows []string, yesLabel, noLabel string) bool {
@@ -117,8 +137,14 @@ func askYesNo(title string, rows []string, yesLabel, noLabel string) bool {
 		title: title,
 		rows:  rows,
 		options: []yesNoOption{
-			{key: yesNoChoiceYes, label: yesLabel},
-			{key: yesNoChoiceNo, label: noLabel},
+			{
+				key:   yesNoChoiceYes,
+				label: yesLabel,
+			},
+			{
+				key:   yesNoChoiceNo,
+				label: noLabel,
+			},
 		},
 	}
 	program := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr))

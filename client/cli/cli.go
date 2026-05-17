@@ -19,11 +19,14 @@ import (
 )
 
 const (
-	errConfig             = "config error: %w"
-	errLLMRequest         = "LLM request failed: %w"
-	envDebugExternals     = "ARCHGUARD_DEBUG_EXTERNALS"
-	envDebugExternalsOn   = "1"
-	envDebugExternalsTrue = "true"
+	errConfig               = "config error: %w"
+	errLLMRequest           = "LLM request failed: %w"
+	envDebugExternals       = "ARCHGUARD_DEBUG_EXTERNALS"
+	headerLanguageDetection = "Language detection"
+	headerAnalyzer          = "ArchGuard Analyzer"
+	headerReports           = "Reports"
+	headerResults           = "Results"
+	rateLimitFrames         = "|/-\\"
 )
 
 type ResultProcessor interface {
@@ -61,7 +64,7 @@ func RunReview(opts ReviewOptions) error {
 	if cfg.Project.Language == "" {
 		det := detector.Detect(opts.ProjectPath)
 		cfg.Project.Language = det.PrimaryLanguage
-		fmt.Fprintln(os.Stderr, renderHeader("Language detection"))
+		fmt.Fprintln(os.Stderr, renderHeader(headerLanguageDetection))
 		fmt.Fprintln(os.Stderr, renderDetection(det))
 	}
 
@@ -90,7 +93,7 @@ func RunReview(opts ReviewOptions) error {
 	var reviewer ResultProcessor = result.NewReviewer()
 
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, renderHeader("ArchGuard Analyzer"))
+	fmt.Fprintln(os.Stderr, renderHeader(headerAnalyzer))
 	fmt.Fprintln(os.Stderr, renderRunOverview(
 		cfg.Project.Name,
 		cfg.Project.Language,
@@ -141,10 +144,10 @@ func RunReview(opts ReviewOptions) error {
 	if err := reviewer.RenderMarkdown(ar, opts.OutputMD); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, renderHeader("Reports"))
+	fmt.Fprintln(os.Stderr, renderHeader(headerReports))
 	fmt.Fprintln(os.Stderr, renderReportPaths(opts.OutputJSON, opts.OutputMD))
 
-	fmt.Println(renderHeader("Results"))
+	fmt.Println(renderHeader(headerResults))
 	fmt.Println(renderResults(ar))
 	return nil
 }
@@ -155,7 +158,6 @@ func animateRateLimitWait(out io.Writer, wait time.Duration) {
 		return
 	}
 
-	frames := []string{"|", "/", "-", "\\"}
 	deadline := time.Now().Add(wait)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -168,7 +170,7 @@ func animateRateLimitWait(out io.Writer, wait time.Duration) {
 			break
 		}
 		fmt.Fprint(out, terminalClearLine)
-		fmt.Fprint(out, renderRateLimitWaitFrame(remaining, frames[frame%len(frames)]))
+		fmt.Fprint(out, renderRateLimitWaitFrame(remaining, string(rateLimitFrames[frame%len(rateLimitFrames)])))
 		select {
 		case <-timer.C:
 			fmt.Fprint(out, terminalClearLine)

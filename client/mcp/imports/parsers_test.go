@@ -1,4 +1,4 @@
-package mcp
+package imports
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func runExtractor(t *testing.T, lang, source string) []string {
 	if grammar == nil {
 		t.Fatalf("no grammar registered for %q", lang)
 	}
-	extractor, ok := languageImportExtractors[lang]
+	extractor, ok := Extractors[lang]
 	if !ok {
 		t.Fatalf("no extractor registered for %q", lang)
 	}

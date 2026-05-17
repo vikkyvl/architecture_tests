@@ -12,7 +12,9 @@ type Log struct {
 	entries []models.AuditEntry
 }
 
-func NewLog() *Log { return &Log{} }
+func NewLog() *Log {
+	return new(Log)
+}
 
 func (l *Log) Record(toolName, args, decision string, size int, err error) {
 	l.mu.Lock()
