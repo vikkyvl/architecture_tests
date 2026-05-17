@@ -37,15 +37,27 @@ type ContentBlock struct {
 	IsError   bool
 }
 
+type toolUseContentBlockJSON struct {
+	Type  string          `json:"type"`
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
+
+type textContentBlockJSON struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 func (b ContentBlock) MarshalJSON() ([]byte, error) {
 	switch b.Type {
 	case c.ContentTypeToolUse:
-		return json.Marshal(struct {
-			Type  string          `json:"type"`
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		}{b.Type, b.ID, b.Name, b.Input})
+		return json.Marshal(toolUseContentBlockJSON{
+			Type:  b.Type,
+			ID:    b.ID,
+			Name:  b.Name,
+			Input: b.Input,
+		})
 	case c.ContentTypeToolResult:
 		m := map[string]interface{}{
 			contentBlockJSONType:      b.Type,
@@ -57,10 +69,10 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(m)
 	default:
-		return json.Marshal(struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}{b.Type, b.Text})
+		return json.Marshal(textContentBlockJSON{
+			Type: b.Type,
+			Text: b.Text,
+		})
 	}
 }
 
@@ -109,12 +121,17 @@ type Tool struct {
 }
 
 func NewTextBlock(text string) ContentBlock {
-	return ContentBlock{Type: c.ContentTypeText, Text: text}
+	return ContentBlock{
+		Type: c.ContentTypeText,
+		Text: text,
+	}
 }
 
 func NewToolResult(toolUseID, content string, isError bool) ContentBlock {
 	return ContentBlock{
-		Type: c.ContentTypeToolResult, ToolUseID: toolUseID,
-		Content: content, IsError: isError,
+		Type:      c.ContentTypeToolResult,
+		ToolUseID: toolUseID,
+		Content:   content,
+		IsError:   isError,
 	}
 }

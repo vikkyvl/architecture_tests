@@ -11,7 +11,10 @@ import (
 
 const (
 	errReadConfig          = "failed to read config %s: %v"
+	errConfigNotFound      = "config file not found: %s"
 	errParseYAML           = "failed to parse YAML %s: %v"
+	operationLoadConfig    = "load config"
+	operationParseConfig   = "parse config"
 	errProjectNameRequired = "project.name is required"
 	errLayerRequired       = "at least one layer is required"
 	errLayerNameRequired   = "each layer must have a name"
@@ -24,14 +27,14 @@ func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, apperrors.NotFound(fmt.Sprintf("config file not found: %s", path))
+			return nil, apperrors.NotFound(fmt.Sprintf(errConfigNotFound, path))
 		}
-		return nil, apperrors.Wrap(apperrors.KindInternal, "load config", fmt.Sprintf(errReadConfig, path, err), err)
+		return nil, apperrors.Wrap(apperrors.KindInternal, operationLoadConfig, fmt.Sprintf(errReadConfig, path, err), err)
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, apperrors.Wrap(apperrors.KindValidation, "parse config", fmt.Sprintf(errParseYAML, path, err), err)
+		return nil, apperrors.Wrap(apperrors.KindValidation, operationParseConfig, fmt.Sprintf(errParseYAML, path, err), err)
 	}
 
 	if err := validate(&cfg); err != nil {

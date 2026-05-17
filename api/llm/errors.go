@@ -9,10 +9,17 @@ import (
 
 const (
 	errAPIKeyRequired         = "%s is required"
+	errMarshalRequest         = "failed to marshal request"
 	providerNotFoundFormat    = "%s resource not found: %s"
 	providerPermissionFormat  = "%s permission denied: %s"
 	providerRateLimitFormat   = "%s rate limit exceeded: %s"
 	providerUnavailableFormat = "%s request failed: %s"
+	operationAnthropicRequest = "anthropic request"
+	operationAnthropicResp    = "anthropic response"
+	operationGeminiRequest    = "gemini request"
+	operationGeminiResp       = "gemini response"
+	operationOpenAIRequest    = "openai request"
+	operationOpenAIResp       = "openai response"
 )
 
 func providerStatusError(provider string, statusCode int, body []byte) error {

@@ -3,6 +3,7 @@ package llm
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/archguard/project/shared/apperrors"
 	c "github.com/archguard/project/shared/constants"
@@ -20,22 +21,26 @@ type Provider interface {
 }
 
 func NewProvider(provider, apiKey, model string) (Provider, error) {
+	return NewProviderWithRateLimitHook(provider, apiKey, model, nil)
+}
+
+func NewProviderWithRateLimitHook(provider, apiKey, model string, rateLimitHook func(time.Duration)) (Provider, error) {
 	switch provider {
 	case c.ProviderAnthropic:
-		return NewAnthropicClient(apiKey, model)
+		return NewAnthropicClientWithRateLimitHook(apiKey, model, rateLimitHook)
 	case c.ProviderGemini:
-		return NewGeminiClient(apiKey, model)
+		return NewGeminiClientWithRateLimitHook(apiKey, model, rateLimitHook)
 	case c.ProviderOpenAI:
-		return NewOpenAIClient(apiKey, model)
+		return NewOpenAIClientWithRateLimitHook(apiKey, model, rateLimitHook)
 	case "":
 		if apiKey != "" || os.Getenv(c.EnvAnthropicKey) != "" {
-			return NewAnthropicClient(apiKey, model)
+			return NewAnthropicClientWithRateLimitHook(apiKey, model, rateLimitHook)
 		}
 		if os.Getenv(c.EnvGeminiKey) != "" {
-			return NewGeminiClient("", model)
+			return NewGeminiClientWithRateLimitHook("", model, rateLimitHook)
 		}
 		if os.Getenv(c.EnvOpenAIKey) != "" {
-			return NewOpenAIClient("", model)
+			return NewOpenAIClientWithRateLimitHook("", model, rateLimitHook)
 		}
 		return nil, apperrors.Validation(fmt.Sprintf(errNoAPIKeyFound, c.EnvAnthropicKey, c.EnvGeminiKey, c.EnvOpenAIKey))
 	default:

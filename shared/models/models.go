@@ -14,16 +14,16 @@ type Violation struct {
 }
 
 type AnalysisResult struct {
-	ProjectName  string       `json:"project_name"`
-	Language     string       `json:"language"`
-	LLMProvider  string       `json:"llm_provider"`
-	LLMModel     string       `json:"llm_model"`
-	AnalyzedAt   time.Time    `json:"analyzed_at"`
-	Duration     string       `json:"duration"`
-	FilesScanned int          `json:"files_scanned"`
-	ToolCalls    int          `json:"tool_calls"`
-	Violations   []Violation  `json:"violations"`
-	Metrics      Metrics      `json:"metrics"`
+	ProjectName     string       `json:"project_name"`
+	Language        string       `json:"language"`
+	LLMProvider     string       `json:"llm_provider"`
+	LLMModel        string       `json:"llm_model"`
+	AnalyzedAt      time.Time    `json:"analyzed_at"`
+	Duration        string       `json:"duration"`
+	FilesScanned    int          `json:"files_scanned"`
+	ToolCalls       int          `json:"tool_calls"`
+	Violations      []Violation  `json:"violations"`
+	Metrics         Metrics      `json:"metrics"`
 	AuditLog        []AuditEntry `json:"audit_log,omitempty"`
 	Incomplete      bool         `json:"incomplete,omitempty"`
 	AnalyzedModules []string     `json:"analyzed_modules,omitempty"`

@@ -10,13 +10,17 @@ import (
 	"github.com/archguard/project/client/mcp"
 	"github.com/archguard/project/shared/apperrors"
 	"github.com/archguard/project/shared/config"
+	c "github.com/archguard/project/shared/constants"
 )
 
 func newTestResolver(t *testing.T) (*mcp.Resolver, string) {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := &config.Config{
-		Project: config.ProjectConfig{Name: "test", Language: "go"},
+		Project: config.ProjectConfig{
+			Name:     "test",
+			Language: "go",
+		},
 	}
 	cm := consent.NewManager(false, dir, nil)
 	al := audit.NewLog()
@@ -25,7 +29,10 @@ func newTestResolver(t *testing.T) (*mcp.Resolver, string) {
 
 func TestReadFileBlocksTraversal(t *testing.T) {
 	r, _ := newTestResolver(t)
-	_, err := r.ExecuteTool("read_file", map[string]interface{}{"path": "../outside.go"}, 10)
+	args := map[string]interface{}{
+		c.ArgPath: "../outside.go",
+	}
+	_, err := r.ExecuteTool(c.ToolReadFile, args, 10)
 	if err == nil {
 		t.Fatal("expected error for path traversal, got nil")
 	}
@@ -37,7 +44,10 @@ func TestReadFileBlocksTraversal(t *testing.T) {
 func TestReadFileBlocksSensitivePath(t *testing.T) {
 	r, dir := newTestResolver(t)
 	_ = os.WriteFile(filepath.Join(dir, ".env"), []byte("SECRET=1"), 0600)
-	_, err := r.ExecuteTool("read_file", map[string]interface{}{"path": ".env"}, 10)
+	args := map[string]interface{}{
+		c.ArgPath: ".env",
+	}
+	_, err := r.ExecuteTool(c.ToolReadFile, args, 10)
 	if err == nil {
 		t.Fatal("expected error for sensitive path, got nil")
 	}
@@ -45,19 +55,26 @@ func TestReadFileBlocksSensitivePath(t *testing.T) {
 
 func TestReadFileSuccess(t *testing.T) {
 	dir := t.TempDir()
-	// pre-authorize read_file so non-interactive manager allows it
 	consentDir := filepath.Join(dir, ".archguard")
 	_ = os.MkdirAll(consentDir, 0700)
 	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
 		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
 
-	cfg := &config.Config{Project: config.ProjectConfig{Name: "test", Language: "go"}}
+	cfg := &config.Config{
+		Project: config.ProjectConfig{
+			Name:     "test",
+			Language: "go",
+		},
+	}
 	cm := consent.NewManager(false, dir, nil)
 	al := audit.NewLog()
 	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil)
 
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
-	got, err := r.ExecuteTool("read_file", map[string]interface{}{"path": "main.go"}, 10)
+	args := map[string]interface{}{
+		c.ArgPath: "main.go",
+	}
+	got, err := r.ExecuteTool(c.ToolReadFile, args, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,8 +85,8 @@ func TestReadFileSuccess(t *testing.T) {
 
 func TestReportViolationValidation(t *testing.T) {
 	r, _ := newTestResolver(t)
-	_, err := r.ExecuteTool("report_violation", map[string]interface{}{
-		"file": "a.php",
+	_, err := r.ExecuteTool(c.ToolReportViolation, map[string]interface{}{
+		c.ArgFile: "a.php",
 	}, 10)
 	if err == nil {
 		t.Fatal("expected validation error for missing fields")
@@ -78,12 +95,12 @@ func TestReportViolationValidation(t *testing.T) {
 
 func TestReportViolationSuccess(t *testing.T) {
 	r, _ := newTestResolver(t)
-	_, err := r.ExecuteTool("report_violation", map[string]interface{}{
-		"file":        "a.php",
-		"severity":    "high",
-		"category":    "layer_dependency",
-		"rule":        "no-infra-in-domain",
-		"description": "infrastructure class used in domain layer",
+	_, err := r.ExecuteTool(c.ToolReportViolation, map[string]interface{}{
+		c.ArgFile:        "a.php",
+		c.ArgSeverity:    c.SeverityHigh,
+		c.ArgCategory:    c.CategoryLayerDep,
+		c.ArgRule:        "no-infra-in-domain",
+		c.ArgDescription: "infrastructure class used in domain layer",
 	}, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

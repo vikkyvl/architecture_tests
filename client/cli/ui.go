@@ -3,8 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"net/url"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -12,18 +10,77 @@ import (
 	"github.com/archguard/project/client/detector"
 	"github.com/archguard/project/shared/apperrors"
 	c "github.com/archguard/project/shared/constants"
-	"github.com/archguard/project/shared/models"
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 const (
-	uiWidth       = 76
-	labelWidth    = 15
-	progressWidth = 32
-	headerPad     = 1
+	uiWidth            = 76
+	labelWidth         = 15
+	progressWidth      = 32
+	headerPad          = 1
+	terminalClearLine  = "\r\x1b[2K"
+	newline            = "\n"
+	doubleNewline      = "\n\n"
+	spaceSeparator     = " "
+	rateLimitTick      = 120 * time.Millisecond
+	rateLimitTimeSlice = time.Second
+	linkMarker         = "↗"
+	labelError         = "Error"
+	labelValidation    = "Validation error"
+	labelNotFound      = "Not found"
+	labelPermission    = "Permission denied"
+	labelExternal      = "External service error"
+	labelRateLimited   = "Rate limited"
+	labelInternal      = "Internal error"
+	labelProject       = "Project"
+	labelRules         = "Rules"
+	labelLayers        = "Layers"
+	labelLLM           = "LLM"
+	labelLimits        = "Limits"
+	labelDetected      = "Detected"
+	labelJSONReport    = "JSON report"
+	labelMarkdown      = "Markdown"
+	labelStatus        = "Status"
+	labelViolations    = "Violations"
+	labelToolCalls     = "Tool calls"
+	labelDuration      = "Duration"
+	panelRunOverview   = "Run overview"
+	panelDetection     = "Language detection"
+	panelReports       = "Report files"
+	panelResults       = "Results"
+	badgeInfo          = "INFO"
+	badgeSkip          = "SKIP"
+	badgeDenied        = "DENIED"
+	badgeFail          = "FAIL"
+	badgeOK            = "OK"
+	badgeRetry         = "RETRY"
+	badgeRateLimit     = "RATE LIMIT"
+	statusComplete     = "complete"
+	statusIncomplete   = "incomplete"
+	msgNoViolations    = "No architectural violations found."
+	fileURLScheme      = "file"
+)
+
+const (
+	formatErrorFallback      = "%s %s"
+	formatNameWithContext    = "%s (%s)"
+	formatRulesSummary       = "%d dependency, %d domain"
+	formatLimitsSummary      = "%d tool calls, %s timeout"
+	formatFileCount          = "%d files"
+	formatFileConfidence     = "%d files (confidence %.0f%%)"
+	formatToolIndex          = "#%02d"
+	formatToolResult         = "%s %s %s"
+	formatToolResultWithMeta = "%s %s %s %s"
+	formatRetryDetail        = "%s request failed, retry %d/%d in %s"
+	formatErrorDetail        = "%s: %s"
+	formatRateLimitFrame     = "%s %s %s"
+	formatRateLimitWaiting   = "waiting %s before retry"
+	formatRateLimitComplete  = "rate limit wait complete after %s"
+	formatHyperlink          = "\x1b]8;;%s\a%s\x1b]8;;\a"
+	formatStyledLink         = "\x1b[1;4;38;5;51m%s\x1b[0m"
+	formatSeverityRow        = "%s %d"
+	formatNotice             = "%s %s"
 )
 
 var (
@@ -75,27 +132,7 @@ var (
 			Foreground(lipgloss.Color("16")).
 			Background(lipgloss.Color("81")).
 			Padding(0, 1)
-
-	progressGradient = progress.WithGradient("#5fd7ff", "#7d5fff")
 )
-
-type reviewSummaryModel struct {
-	content string
-}
-
-var _ tea.Model = reviewSummaryModel{}
-
-func (m reviewSummaryModel) Init() tea.Cmd {
-	return nil
-}
-
-func (m reviewSummaryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	return m, nil
-}
-
-func (m reviewSummaryModel) View() string {
-	return m.content
-}
 
 func renderHeader(title string) string {
 	return titleStyle.Render(title)
@@ -104,23 +141,23 @@ func renderHeader(title string) string {
 func RenderError(err error) string {
 	var appErr *apperrors.Error
 	if !errors.As(err, &appErr) {
-		return errorStyle.Render("Error") + " " + valueStyle.Render(err.Error())
+		return errorStyle.Render(labelError) + spaceSeparator + valueStyle.Render(err.Error())
 	}
 
-	title := "Error"
+	title := labelError
 	switch appErr.Kind {
 	case apperrors.KindValidation:
-		title = "Validation error"
+		title = labelValidation
 	case apperrors.KindNotFound:
-		title = "Not found"
+		title = labelNotFound
 	case apperrors.KindPermission:
-		title = "Permission denied"
+		title = labelPermission
 	case apperrors.KindExternalService:
-		title = "External service error"
+		title = labelExternal
 	case apperrors.KindRateLimited:
-		title = "Rate limited"
+		title = labelRateLimited
 	case apperrors.KindInternal:
-		title = "Internal error"
+		title = labelInternal
 	}
 
 	return renderNotice(errorBadgeStyle.Render(title), appErr.Error())
@@ -128,19 +165,19 @@ func RenderError(err error) string {
 
 func renderRunOverview(cfgName, language string, layers, depRules, domainRules int, providerName, providerModel string, maxTools int, timeout string) string {
 	rows := []string{
-		renderKV("Project", fmt.Sprintf("%s (%s)", cfgName, language)),
-		renderKV("Rules", fmt.Sprintf("%d dependency, %d domain", depRules, domainRules)),
-		renderKV("Layers", fmt.Sprintf("%d", layers)),
-		renderKV("LLM", fmt.Sprintf("%s (%s)", providerName, providerModel)),
-		renderKV("Limits", fmt.Sprintf("%d tool calls, %s timeout", maxTools, timeout)),
+		renderKV(labelProject, fmt.Sprintf(formatNameWithContext, cfgName, language)),
+		renderKV(labelRules, fmt.Sprintf(formatRulesSummary, depRules, domainRules)),
+		renderKV(labelLayers, fmt.Sprintf(c.FormatInt, layers)),
+		renderKV(labelLLM, fmt.Sprintf(formatNameWithContext, providerName, providerModel)),
+		renderKV(labelLimits, fmt.Sprintf(formatLimitsSummary, maxTools, timeout)),
 	}
 
-	return renderPanel("Run overview", rows)
+	return renderPanel(panelRunOverview, rows)
 }
 
 func renderDetection(r detector.DetectResult) string {
 	var rows []string
-	rows = append(rows, renderKV("Detected", r.PrimaryLanguage))
+	rows = append(rows, renderKV(labelDetected, r.PrimaryLanguage))
 
 	langs := make([]string, 0, len(r.FileCounts))
 	for lang := range r.FileCounts {
@@ -157,132 +194,51 @@ func renderDetection(r detector.DetectResult) string {
 
 	for _, lang := range langs {
 		count := r.FileCounts[lang]
-		rows = append(rows, renderKV(lang, fmt.Sprintf("%d files", count)))
+		value := fmt.Sprintf(formatFileCount, count)
+		if conf, ok := r.Confidence[lang]; ok {
+			value = fmt.Sprintf(formatFileConfidence, count, conf*100)
+		}
+		rows = append(rows, renderKV(lang, value))
 	}
-	return renderPanel("Language detection", rows)
+	return renderPanel(panelDetection, rows)
 }
 
 func renderKV(label, value string) string {
-	return labelStyle.Render(label) + " " + valueStyle.Render(value)
+	return labelStyle.Render(label) + spaceSeparator + valueStyle.Render(value)
 }
 
 func renderKVRaw(label, value string) string {
-	return labelStyle.Render(label) + " " + value
+	return labelStyle.Render(label) + spaceSeparator + value
 }
 
 func renderStep(text string) string {
 	s := spinner.New()
 	s.Spinner = spinner.MiniDot
-	return infoBadgeStyle.Render("INFO") + " " + infoStyle.Render(s.View()) + " " + valueStyle.Render(text)
+	return infoBadgeStyle.Render(badgeInfo) + spaceSeparator + infoStyle.Render(s.View()) + spaceSeparator + valueStyle.Render(text)
 }
 
 func renderLLMText(text string) string {
-	return renderSubtlePanel("LLM", []string{valueStyle.Render(text)})
-}
-
-func renderToolResult(index int, name string, size int, err error) string {
-	prefix := mutedStyle.Render(fmt.Sprintf("#%02d", index))
-	if err != nil {
-		if apperrors.IsKind(err, apperrors.KindPermission) {
-			return fmt.Sprintf("%s %s %s", prefix, warnBadgeStyle.Render("DENIED"), valueStyle.Render(name+": "+err.Error()))
-		}
-		return fmt.Sprintf("%s %s %s", prefix, errorBadgeStyle.Render("FAIL"), valueStyle.Render(name+": "+err.Error()))
-	}
-	meta := mutedStyle.Render(fmt.Sprintf("%d chars", size))
-	return fmt.Sprintf("%s %s %s %s", prefix, successBadgeStyle.Render("OK"), valueStyle.Render(name), meta)
-}
-
-func renderRetry(provider string, attempt, maxAttempts int, wait time.Duration, err error) string {
-	detail := fmt.Sprintf("%s request failed, retry %d/%d in %s", provider, attempt, maxAttempts, wait)
-	if err != nil {
-		detail = fmt.Sprintf("%s: %s", detail, err.Error())
-	}
-	return fmt.Sprintf("%s %s", warnBadgeStyle.Render("RETRY"), mutedStyle.Render(detail))
-}
-
-func renderReportPaths(jsonPath, mdPath string) string {
-	rows := []string{
-		renderKVRaw("JSON report", linkStyle.Render(jsonPath)),
-		renderKVRaw("Markdown", linkStyle.Render(mdPath)),
-	}
-	panel := renderPanel("Report files", rows)
-	panel = insertFileLink(panel, jsonPath)
-	panel = insertFileLink(panel, mdPath)
-	return panel
-}
-
-// insertFileLink wraps occurrences of path in the already-rendered panel with
-// an OSC 8 terminal hyperlink. Applied after lipgloss rendering to avoid
-// lipgloss mangling the non-SGR escape sequences.
-func insertFileLink(panel, path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return panel
-	}
-	uri := (&url.URL{Scheme: "file", Path: abs}).String()
-	linked := fmt.Sprintf("\x1b]8;;%s\a%s\x1b]8;;\a", uri, path)
-	return strings.Replace(panel, path, linked, 1)
-}
-
-func renderResults(ar *models.AnalysisResult) string {
-	bar := progress.New(progressGradient, progress.WithWidth(progressWidth))
-	total := max(ar.Metrics.TotalViolations, 1)
-	severityRows := make([]string, 0, len(c.SeverityList))
-	for _, sev := range c.SeverityList {
-		count := ar.Metrics.BySeverity[sev]
-		if count == 0 {
-			continue
-		}
-		severityRows = append(severityRows, renderKV(titleCase(sev), fmt.Sprintf("%s %d", bar.ViewAs(float64(count)/float64(total)), count)))
-	}
-	if len(severityRows) == 0 {
-		severityRows = append(severityRows, successStyle.Render("No architectural violations found."))
-	}
-
-	status := successStyle.Render("complete")
-	if ar.Incomplete {
-		status = warnStyle.Render("incomplete")
-	}
-
-	rows := []string{
-		renderKV("Status", status),
-		renderKV("Violations", fmt.Sprintf("%d", ar.Metrics.TotalViolations)),
-	}
-	rows = append(rows, severityRows...)
-	rows = append(rows,
-		renderKV("Tool calls", fmt.Sprintf("%d", ar.ToolCalls)),
-		renderKV("Duration", ar.Duration),
-	)
-
-	model := reviewSummaryModel{content: renderPanel("Results", rows)}
-	return model.View()
+	return renderSubtlePanel(labelLLM, []string{valueStyle.Render(text)})
 }
 
 func renderPanel(title string, rows []string) string {
-	body := strings.Join(rows, "\n")
+	body := strings.Join(rows, newline)
 	if title == "" {
 		return panelStyle.Render(body)
 	}
-	content := sectionStyle.Render(title) + "\n\n" + body
+	content := sectionStyle.Render(title) + doubleNewline + body
 	return panelStyle.Render(content)
 }
 
 func renderSubtlePanel(title string, rows []string) string {
-	body := strings.Join(rows, "\n")
+	body := strings.Join(rows, newline)
 	if title == "" {
 		return subtlePanelStyle.Render(body)
 	}
-	content := mutedStyle.Bold(true).Render(title) + "\n\n" + body
+	content := mutedStyle.Bold(true).Render(title) + doubleNewline + body
 	return subtlePanelStyle.Render(content)
 }
 
 func renderNotice(prefix, text string) string {
-	return fmt.Sprintf("%s %s", prefix, valueStyle.Render(text))
-}
-
-func titleCase(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	return fmt.Sprintf(formatNotice, prefix, valueStyle.Render(text))
 }

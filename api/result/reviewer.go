@@ -34,12 +34,20 @@ const (
 	markdownSuggestionLine    = "- Suggestion: %s\n"
 	markdownAuditTable        = "## Audit Log\n\n| # | Tool | Decision | Size | Error |\n|---|------|----------|------|-------|\n"
 	markdownAuditRow          = "| %d | %s | %s | %d | %s |\n"
+	markdownModuleHeader      = "\n## %s\n\n"
+	markdownModuleLine        = "- `%s`\n"
+	markdownAnalyzedModules   = "Analyzed Modules"
+	markdownSkippedModules    = "Skipped Modules (limit reached)"
 	dedupKeyFormat            = "%s:%d:%s"
+	operationResult           = "result"
+	errMarshalResult          = "failed to marshal result"
 )
 
 type Reviewer struct{}
 
-func NewReviewer() *Reviewer { return &Reviewer{} }
+func NewReviewer() *Reviewer {
+	return new(Reviewer)
+}
 
 func (r *Reviewer) Process(res *models.AnalysisResult) {
 	res.Violations = r.dedup(res.Violations)
@@ -50,7 +58,7 @@ func (r *Reviewer) Process(res *models.AnalysisResult) {
 func (r *Reviewer) RenderJSON(res *models.AnalysisResult, path string) error {
 	data, err := json.MarshalIndent(res, "", c.JSONIndent)
 	if err != nil {
-		return apperrors.Wrap(apperrors.KindInternal, "result", "failed to marshal result", err)
+		return apperrors.Wrap(apperrors.KindInternal, operationResult, errMarshalResult, err)
 	}
 	return os.WriteFile(path, data, c.FilePermission)
 }
@@ -58,6 +66,16 @@ func (r *Reviewer) RenderJSON(res *models.AnalysisResult, path string) error {
 func (r *Reviewer) RenderMarkdown(res *models.AnalysisResult, path string) error {
 	var sb strings.Builder
 
+	r.writeMarkdownSummary(&sb, res)
+	r.writeMetricTables(&sb, res.Metrics)
+	r.writeViolations(&sb, res.Violations)
+	r.writeModuleLists(&sb, res)
+	r.writeAuditLog(&sb, res.AuditLog)
+
+	return os.WriteFile(path, []byte(sb.String()), c.FilePermission)
+}
+
+func (r *Reviewer) writeMarkdownSummary(sb *strings.Builder, res *models.AnalysisResult) {
 	sb.WriteString(fmt.Sprintf(markdownReportTitle, res.ProjectName))
 	sb.WriteString(fmt.Sprintf(markdownLanguageLine, res.Language))
 	sb.WriteString(fmt.Sprintf(markdownLLMLine, res.LLMProvider, res.LLMModel))
@@ -69,63 +87,70 @@ func (r *Reviewer) RenderMarkdown(res *models.AnalysisResult, path string) error
 	if res.Incomplete {
 		sb.WriteString(markdownIncompleteWarning)
 	}
+}
 
+func (r *Reviewer) writeMetricTables(sb *strings.Builder, metrics models.Metrics) {
 	sb.WriteString(markdownSeverityTable)
 	for _, sev := range c.SeverityList {
-		if n := res.Metrics.BySeverity[sev]; n > 0 {
+		if n := metrics.BySeverity[sev]; n > 0 {
 			sb.WriteString(fmt.Sprintf(markdownTableRow, sev, n))
 		}
 	}
 
 	sb.WriteString(markdownCategoryTable)
-	for cat, n := range res.Metrics.ByCategory {
+	for cat, n := range metrics.ByCategory {
 		sb.WriteString(fmt.Sprintf(markdownTableRow, cat, n))
 	}
+}
 
-	if len(res.Violations) > 0 {
-		sb.WriteString(markdownViolationsHeader)
-		curSev := ""
-		for i, v := range res.Violations {
-			if v.Severity != curSev {
-				curSev = v.Severity
-				sb.WriteString(fmt.Sprintf(markdownSeverityHeader, strings.ToUpper(curSev)))
-			}
-			sb.WriteString(fmt.Sprintf(markdownViolationTitle, i+1, v.Category, v.Rule))
-			sb.WriteString(fmt.Sprintf(markdownFileLine, v.File))
-			if v.Line > 0 {
-				sb.WriteString(fmt.Sprintf(markdownLineSuffix, v.Line))
-			}
-			sb.WriteString("\n")
-			sb.WriteString(fmt.Sprintf(markdownDescriptionLine, v.Description))
-			if v.Suggestion != "" {
-				sb.WriteString(fmt.Sprintf(markdownSuggestionLine, v.Suggestion))
-			}
-			sb.WriteString("\n")
-		}
+func (r *Reviewer) writeViolations(sb *strings.Builder, violations []models.Violation) {
+	if len(violations) == 0 {
+		return
 	}
-
-	if len(res.AnalyzedModules) > 0 {
-		sb.WriteString("\n## Analyzed Modules\n\n")
-		for _, m := range res.AnalyzedModules {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", m))
+	sb.WriteString(markdownViolationsHeader)
+	curSev := ""
+	for i, v := range violations {
+		if v.Severity != curSev {
+			curSev = v.Severity
+			sb.WriteString(fmt.Sprintf(markdownSeverityHeader, strings.ToUpper(curSev)))
 		}
-	}
-
-	if len(res.SkippedModules) > 0 {
-		sb.WriteString("\n## Skipped Modules (limit reached)\n\n")
-		for _, m := range res.SkippedModules {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", m))
+		sb.WriteString(fmt.Sprintf(markdownViolationTitle, i+1, v.Category, v.Rule))
+		sb.WriteString(fmt.Sprintf(markdownFileLine, v.File))
+		if v.Line > 0 {
+			sb.WriteString(fmt.Sprintf(markdownLineSuffix, v.Line))
 		}
-	}
-
-	if len(res.AuditLog) > 0 {
-		sb.WriteString(markdownAuditTable)
-		for i, e := range res.AuditLog {
-			sb.WriteString(fmt.Sprintf(markdownAuditRow, i+1, e.ToolName, e.Decision, e.ResultSize, e.Error))
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf(markdownDescriptionLine, v.Description))
+		if v.Suggestion != "" {
+			sb.WriteString(fmt.Sprintf(markdownSuggestionLine, v.Suggestion))
 		}
+		sb.WriteString("\n")
 	}
+}
 
-	return os.WriteFile(path, []byte(sb.String()), c.FilePermission)
+func (r *Reviewer) writeModuleLists(sb *strings.Builder, res *models.AnalysisResult) {
+	writeModuleList(sb, markdownAnalyzedModules, res.AnalyzedModules)
+	writeModuleList(sb, markdownSkippedModules, res.SkippedModules)
+}
+
+func writeModuleList(sb *strings.Builder, title string, modules []string) {
+	if len(modules) == 0 {
+		return
+	}
+	sb.WriteString(fmt.Sprintf(markdownModuleHeader, title))
+	for _, m := range modules {
+		sb.WriteString(fmt.Sprintf(markdownModuleLine, m))
+	}
+}
+
+func (r *Reviewer) writeAuditLog(sb *strings.Builder, entries []models.AuditEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	sb.WriteString(markdownAuditTable)
+	for i, e := range entries {
+		sb.WriteString(fmt.Sprintf(markdownAuditRow, i+1, e.ToolName, e.Decision, e.ResultSize, e.Error))
+	}
 }
 
 func (r *Reviewer) dedup(vs []models.Violation) []models.Violation {
