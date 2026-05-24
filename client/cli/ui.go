@@ -15,51 +15,52 @@ import (
 )
 
 const (
-	uiWidth            = 76
-	labelWidth         = 15
-	progressWidth      = 32
-	headerPad          = 1
-	terminalClearLine  = "\r\x1b[2K"
-	newline            = "\n"
-	doubleNewline      = "\n\n"
-	spaceSeparator     = " "
-	rateLimitTick      = 120 * time.Millisecond
-	rateLimitTimeSlice = time.Second
-	linkMarker         = "↗"
-	labelError         = "Error"
-	labelValidation    = "Validation error"
-	labelNotFound      = "Not found"
-	labelPermission    = "Permission denied"
-	labelExternal      = "External service error"
-	labelRateLimited   = "Rate limited"
-	labelInternal      = "Internal error"
-	labelProject       = "Project"
-	labelRules         = "Rules"
-	labelLayers        = "Layers"
-	labelLLM           = "LLM"
-	labelLimits        = "Limits"
-	labelDetected      = "Detected"
-	labelJSONReport    = "JSON report"
-	labelMarkdown      = "Markdown"
-	labelStatus        = "Status"
-	labelViolations    = "Violations"
-	labelToolCalls     = "Tool calls"
-	labelDuration      = "Duration"
-	panelRunOverview   = "Run overview"
-	panelDetection     = "Language detection"
-	panelReports       = "Report files"
-	panelResults       = "Results"
-	badgeInfo          = "INFO"
-	badgeSkip          = "SKIP"
-	badgeDenied        = "DENIED"
-	badgeFail          = "FAIL"
-	badgeOK            = "OK"
-	badgeRetry         = "RETRY"
-	badgeRateLimit     = "RATE LIMIT"
-	statusComplete     = "complete"
-	statusIncomplete   = "incomplete"
-	msgNoViolations    = "No architectural violations found."
-	fileURLScheme      = "file"
+	uiWidth             = 76
+	labelWidth          = 15
+	progressWidth       = 32
+	headerPad           = 1
+	terminalClearLine   = "\r\x1b[2K"
+	newline             = "\n"
+	doubleNewline       = "\n\n"
+	spaceSeparator      = " "
+	rateLimitTick       = 120 * time.Millisecond
+	rateLimitTimeSlice  = time.Second
+	linkMarker          = "↗"
+	labelError          = "Error"
+	labelValidation     = "Validation error"
+	labelNotFound       = "Not found"
+	labelPermission     = "Permission denied"
+	labelExternal       = "External service error"
+	labelRateLimited    = "Rate limited"
+	labelInternal       = "Internal error"
+	labelProject        = "Project"
+	labelRules          = "Rules"
+	labelLayers         = "Layers"
+	labelLLM            = "LLM"
+	labelLimits         = "Limits"
+	labelDetected       = "Detected"
+	labelJSONReport     = "JSON report"
+	labelMarkdown       = "Markdown"
+	labelStatus         = "Status"
+	labelViolations     = "Violations"
+	labelToolCalls      = "Tool calls"
+	labelDuration       = "Duration"
+	panelRunOverview    = "Run overview"
+	panelDetection      = "Language detection"
+	panelReports        = "Report files"
+	panelResults        = "Results"
+	badgeInfo           = "INFO"
+	badgeSkip           = "SKIP"
+	badgeDenied         = "DENIED"
+	badgeFail           = "FAIL"
+	badgeOK             = "OK"
+	badgeRetry          = "RETRY"
+	badgeRateLimit      = "RATE LIMIT"
+	badgeProactivePause = "PROACTIVE PAUSE"
+	statusComplete      = "complete"
+	statusIncomplete    = "incomplete"
+	msgNoViolations     = "No architectural violations found."
+	fileURLScheme       = "file"
 )
 
 const (
@@ -77,6 +78,8 @@ const (
 	formatRateLimitFrame     = "%s %s %s"
 	formatRateLimitWaiting   = "waiting %s before retry"
 	formatRateLimitComplete  = "rate limit wait complete after %s"
+	formatProactiveWaiting   = "pausing %s ahead of token-budget exhaustion"
+	formatProactiveComplete  = "proactive pause complete after %s"
 	formatHyperlink          = "\x1b]8;;%s\a%s\x1b]8;;\a"
 	formatStyledLink         = "\x1b[1;4;38;5;51m%s\x1b[0m"
 	formatSeverityRow        = "%s %d"
@@ -141,7 +144,7 @@ func renderHeader(title string) string {
 func RenderError(err error) string {
 	var appErr *apperrors.Error
 	if !errors.As(err, &appErr) {
-		return errorStyle.Render(labelError) + spaceSeparator + valueStyle.Render(err.Error())
+		return errorStyle.Render(labelError) + spaceSeparator + valueStyle.Render(publicErrorMessage(err))
 	}
 
 	title := labelError
@@ -160,7 +163,7 @@ func RenderError(err error) string {
 		title = labelInternal
 	}
 
-	return renderNotice(errorBadgeStyle.Render(title), appErr.Error())
+	return renderNotice(errorBadgeStyle.Render(title), publicErrorMessage(appErr))
 }
 
 func renderRunOverview(cfgName, language string, layers, depRules, domainRules int, providerName, providerModel string, maxTools int, timeout string) string {

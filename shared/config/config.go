@@ -6,6 +6,7 @@ type Config struct {
 	Rules         []RuleConfig        `yaml:"rules"`
 	DomainContext DomainContextConfig `yaml:"domain_context"`
 	External      []ExternalConfig    `yaml:"external,omitempty"`
+	Runtime       RuntimeConfig       `yaml:"runtime,omitempty"`
 }
 
 type ProjectConfig struct {

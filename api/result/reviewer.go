@@ -34,6 +34,7 @@ const (
 	markdownSuggestionLine    = "- Suggestion: %s\n"
 	markdownAuditTable        = "## Audit Log\n\n| # | Tool | Decision | Size | Error |\n|---|------|----------|------|-------|\n"
 	markdownAuditRow          = "| %d | %s | %s | %d | %s |\n"
+	markdownCacheFooter       = "\n## Token Efficiency\n\n- LLM turns: %d\n- Total input tokens: %d\n- Cached input tokens (reads): %d (%.0f%%)\n- Cache write tokens: %d\n- Pruned tool results: %d\n"
 	markdownModuleHeader      = "\n## %s\n\n"
 	markdownModuleLine        = "- `%s`\n"
 	markdownAnalyzedModules   = "Analyzed Modules"
@@ -53,6 +54,45 @@ func (r *Reviewer) Process(res *models.AnalysisResult) {
 	res.Violations = r.dedup(res.Violations)
 	res.Violations = r.sortViolations(res.Violations)
 	res.Metrics = r.metrics(res.Violations)
+	res.Metrics.CacheHitRatio = computeCacheHitRatio(res.AuditLog)
+	res.Metrics.RateLimitHits = countRateLimitHits(res.AuditLog)
+	res.Metrics.PreemptiveSleeps = countPreemptiveSleeps(res.AuditLog)
+}
+
+func computeCacheHitRatio(entries []models.AuditEntry) float64 {
+	var input, cached int
+	for _, e := range entries {
+		if e.ToolName != c.EventLLMTurn {
+			continue
+		}
+		input += e.InputTokens
+		cached += e.CachedInputTokens
+	}
+	total := input + cached
+	if total == 0 {
+		return 0
+	}
+	return float64(cached) / float64(total)
+}
+
+func countRateLimitHits(entries []models.AuditEntry) int {
+	var hits int
+	for _, e := range entries {
+		if e.ToolName == c.EventRateLimit {
+			hits++
+		}
+	}
+	return hits
+}
+
+func countPreemptiveSleeps(entries []models.AuditEntry) int {
+	var hits int
+	for _, e := range entries {
+		if e.ToolName == c.EventPreemptiveSleep {
+			hits++
+		}
+	}
+	return hits
 }
 
 func (r *Reviewer) RenderJSON(res *models.AnalysisResult, path string) error {
@@ -70,9 +110,32 @@ func (r *Reviewer) RenderMarkdown(res *models.AnalysisResult, path string) error
 	r.writeMetricTables(&sb, res.Metrics)
 	r.writeViolations(&sb, res.Violations)
 	r.writeModuleLists(&sb, res)
+	r.writeTokenEfficiency(&sb, res.AuditLog)
 	r.writeAuditLog(&sb, res.AuditLog)
 
 	return os.WriteFile(path, []byte(sb.String()), c.FilePermission)
+}
+
+func (r *Reviewer) writeTokenEfficiency(sb *strings.Builder, entries []models.AuditEntry) {
+	var turns, input, cached, cacheWrite, pruned int
+	for _, e := range entries {
+		if e.ToolName != c.EventLLMTurn {
+			continue
+		}
+		turns++
+		input += e.InputTokens
+		cached += e.CachedInputTokens
+		cacheWrite += e.CacheWriteInputTokens
+		pruned += e.PrunedTurns
+	}
+	if turns == 0 {
+		return
+	}
+	var pct float64
+	if input+cached > 0 {
+		pct = float64(cached) / float64(input+cached) * 100
+	}
+	sb.WriteString(fmt.Sprintf(markdownCacheFooter, turns, input, cached, pct, cacheWrite, pruned))
 }
 
 func (r *Reviewer) writeMarkdownSummary(sb *strings.Builder, res *models.AnalysisResult) {

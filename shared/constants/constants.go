@@ -27,12 +27,29 @@ const (
 
 const (
 	DefaultMaxTokens    = 4096
+	AnalyzerMaxTokens   = 2048
 	DefaultMaxToolCalls = 100
 	DefaultTimeout      = 10 * time.Minute
 	MaxPromptLength     = 15000
 	TruncateLength      = 200
 	FilePermission      = 0644
 	FileCountBudget     = 999
+)
+
+const (
+	RuntimeProfileAuto         = "auto"
+	RuntimeProfileConservative = "conservative"
+	RuntimeProfileAggressive   = "aggressive"
+)
+
+const (
+	DefaultMaxReadFileBytes = 65536
+	TailTokenThreshold      = 5000
+)
+
+const (
+	EnvDeterministicBackoff  = "ARCHGUARD_DETERMINISTIC_BACKOFF"
+	DeterministicBackoffSeed = 1
 )
 
 const (

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -12,10 +13,23 @@ import (
 
 const (
 	defaultMaxRetries        = 3
-	initialUserPrompt        = "Analyze this project for architectural violations. Check every source file."
+	initialUserPrompt        = "Analyze this project for architectural violations in small, targeted batches. First map modules and dependency boundaries, then request only the source files needed to validate likely rule violations. Avoid rereading files and keep tool usage focused."
 	contextSeparator         = "\n\n"
 	retryableOverloaded      = "overloaded"
 	retryableTempUnavailable = "temporarily unavailable"
+	pruneAfterTurns          = 20
+	keepRecentTurns          = 8
+	prunedPlaceholder        = "<elided to conserve tokens; full content in audit log>"
+	charsPerTokenEstimate    = 4
+	smallRequestSpacing      = 2 * time.Second
+	mediumRequestSpacing     = 6 * time.Second
+	largeRequestSpacing      = 15 * time.Second
+	veryLargeRequestSpacing  = 30 * time.Second
+	mediumRequestTokens      = 8000
+	largeRequestTokens       = 16000
+	veryLargeRequestTokens   = 24000
+	maxElisionsPerCall       = 2
+	defaultSoftLimitTokens   = 20000
 )
 
 var defaultRetryWaits = []time.Duration{
@@ -35,6 +49,10 @@ type AuditReader interface {
 	Entries() []models.AuditEntry
 }
 
+type LLMTurnRecorder interface {
+	RecordLLMTurn(input, cached, cacheWrite, pruned int)
+}
+
 type Observer interface {
 	LimitReached(message string)
 	Retry(provider string, attempt, maxAttempts int, wait time.Duration, err error)
@@ -51,12 +69,15 @@ type Options struct {
 	MaxRetries      int
 	RetryWaits      []time.Duration
 	TextPreviewSize int
+	PruneAfterTurns int
+	KeepRecentTurns int
 }
 
 type Engine struct {
 	provider llm.Provider
 	tools    ToolRunner
 	audit    AuditReader
+	recorder LLMTurnRecorder
 	observer Observer
 }
 
@@ -95,10 +116,12 @@ func NewEngine(provider llm.Provider, tools ToolRunner, audit AuditReader, obser
 	if observer == nil {
 		observer = new(noopObserver)
 	}
+	recorder, _ := audit.(LLMTurnRecorder)
 	return &Engine{
 		provider: provider,
 		tools:    tools,
 		audit:    audit,
+		recorder: recorder,
 		observer: observer,
 	}
 }
@@ -112,6 +135,12 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 	}
 	if opts.TextPreviewSize == 0 {
 		opts.TextPreviewSize = c.TruncateLength
+	}
+	if opts.PruneAfterTurns == 0 {
+		opts.PruneAfterTurns = pruneAfterTurns
+	}
+	if opts.KeepRecentTurns == 0 {
+		opts.KeepRecentTurns = keepRecentTurns
 	}
 
 	initialText := initialUserPrompt
@@ -127,8 +156,10 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 		},
 	}
 	apiTools := toAPITools(nonExternalTools(e.tools.ListTools()))
+	systemBlocks := []llm.SystemBlock{llm.NewSystemBlock(opts.SystemPrompt, false)}
 
 	toolCalls := 0
+	turn := 0
 	deadline := time.Now().Add(opts.Timeout)
 	incomplete := false
 
@@ -144,12 +175,32 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 			break
 		}
 
-		resp, err := e.sendMessageWithRetry(llm.Request{
-			System: opts.SystemPrompt, MaxTokens: c.DefaultMaxTokens,
+		projected := estimateRequestTokens(llm.Request{
+			System: systemBlocks, Messages: messages, Tools: apiTools,
+		})
+		softLimit := providerSoftLimit(e.provider.Name())
+		pruned := prunePressureAware(messages, projected, softLimit, opts.KeepRecentTurns)
+
+		req := llm.Request{
+			System: systemBlocks, MaxTokens: c.AnalyzerMaxTokens,
 			Messages: messages, Tools: apiTools,
-		}, opts.MaxRetries, opts.RetryWaits)
+		}
+		if turn > 0 {
+			wait := requestPaceWait(estimateRequestTokens(req))
+			if time.Now().Add(wait).After(deadline) {
+				e.observer.LimitReached(c.LimitReasonTimeout)
+				incomplete = true
+				break
+			}
+			time.Sleep(wait)
+		}
+		resp, err := e.sendMessageWithRetry(req, opts.MaxRetries, opts.RetryWaits)
+		turn++
 		if err != nil {
 			return nil, err
+		}
+		if e.recorder != nil {
+			e.recorder.RecordLLMTurn(resp.Usage.InputTokens, resp.Usage.CacheReadTokens, resp.Usage.CacheCreationTokens, pruned)
 		}
 
 		messages = append(messages, llm.Message{
@@ -221,6 +272,72 @@ func toAPITools(defs []mcp.ToolDefinition) []llm.Tool {
 	return tools
 }
 
+type pruneCandidate struct {
+	msg   int
+	block int
+	size  int
+}
+
+func prunePressureAware(messages []llm.Message, projectedTokens, softLimit, keepRecent int) int {
+	if softLimit <= 0 || projectedTokens < softLimit {
+		return 0
+	}
+	keepFromIdx := len(messages) - keepRecent*2
+	if keepFromIdx <= 0 {
+		return 0
+	}
+	candidates := make([]pruneCandidate, 0)
+	for i := 0; i < keepFromIdx; i++ {
+		for j := range messages[i].Content {
+			b := &messages[i].Content[j]
+			if b.Type != c.ContentTypeToolResult {
+				continue
+			}
+			if b.Content == prunedPlaceholder {
+				continue
+			}
+			if b.CacheControl != nil {
+				continue
+			}
+			candidates = append(candidates, pruneCandidate{msg: i, block: j, size: len(b.Content)})
+		}
+	}
+	if len(candidates) == 0 {
+		return 0
+	}
+	sort.Slice(candidates, func(a, b int) bool {
+		if candidates[a].size != candidates[b].size {
+			return candidates[a].size > candidates[b].size
+		}
+		if candidates[a].msg != candidates[b].msg {
+			return candidates[a].msg < candidates[b].msg
+		}
+		return candidates[a].block < candidates[b].block
+	})
+	limit := maxElisionsPerCall
+	if limit > len(candidates) {
+		limit = len(candidates)
+	}
+	for k := 0; k < limit; k++ {
+		c := candidates[k]
+		messages[c.msg].Content[c.block].Content = prunedPlaceholder
+	}
+	return limit
+}
+
+func providerSoftLimit(name string) int {
+	switch name {
+	case c.ProviderAnthropic:
+		return 2 * c.AnthropicInputTPM / 3
+	case c.ProviderGemini:
+		return 2 * c.GeminiInputTPM / 3
+	case c.ProviderOpenAI:
+		return 2 * c.OpenAIInputTPM / 3
+	default:
+		return defaultSoftLimitTokens
+	}
+}
+
 func nonExternalTools(defs []mcp.ToolDefinition) []mcp.ToolDefinition {
 	tools := make([]mcp.ToolDefinition, 0, len(defs))
 	for _, d := range defs {
@@ -230,4 +347,39 @@ func nonExternalTools(defs []mcp.ToolDefinition) []mcp.ToolDefinition {
 		tools = append(tools, d)
 	}
 	return tools
+}
+
+func requestPaceWait(projectedTokens int) time.Duration {
+	switch {
+	case projectedTokens >= veryLargeRequestTokens:
+		return veryLargeRequestSpacing
+	case projectedTokens >= largeRequestTokens:
+		return largeRequestSpacing
+	case projectedTokens >= mediumRequestTokens:
+		return mediumRequestSpacing
+	default:
+		return smallRequestSpacing
+	}
+}
+
+func estimateRequestTokens(req llm.Request) int {
+	total := len(llm.SystemText(req.System))
+	for _, msg := range req.Messages {
+		total += len(msg.Role)
+		for _, block := range msg.Content {
+			total += len(block.Type)
+			total += len(block.Text)
+			total += len(block.ID)
+			total += len(block.Name)
+			total += len(block.Input)
+			total += len(block.ToolUseID)
+			total += len(block.Content)
+		}
+	}
+	for _, tool := range req.Tools {
+		total += len(tool.Name)
+		total += len(tool.Description)
+		total += len(tool.InputSchema)
+	}
+	return total / charsPerTokenEstimate
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/archguard/project/shared/apperrors"
 )
 
 const (
@@ -59,6 +61,48 @@ func TestAnimateRateLimitWaitRendersSpinnerAndResume(t *testing.T) {
 	if !strings.Contains(output, testExpectedRetryBadge) {
 		t.Fatal(testAnimatedRetryMessage)
 	}
+}
+
+func TestRenderRetryHidesProviderPayload(t *testing.T) {
+	err := apperrors.ExternalService(geminiUnavailablePayload())
+
+	output := renderRetry("gemini", 1, 3, 2*time.Second, err)
+
+	assertNoProviderPayload(t, output)
+	if !strings.Contains(output, "gemini is temporarily unavailable") {
+		t.Fatalf("expected sanitized provider message, got %q", output)
+	}
+}
+
+func TestRenderErrorHidesProviderPayload(t *testing.T) {
+	err := apperrors.ExternalService(geminiUnavailablePayload())
+
+	output := RenderError(err)
+
+	assertNoProviderPayload(t, output)
+	if !strings.Contains(output, "gemini is temporarily unavailable") {
+		t.Fatalf("expected sanitized provider message, got %q", output)
+	}
+}
+
+func assertNoProviderPayload(t *testing.T, output string) {
+	t.Helper()
+
+	for _, raw := range []string{`"error"`, `"code"`, "high demand", "UNAVAILABLE"} {
+		if strings.Contains(output, raw) {
+			t.Fatalf("output leaked provider payload %q in %q", raw, output)
+		}
+	}
+}
+
+func geminiUnavailablePayload() string {
+	return `gemini request failed: {
+  "error": {
+    "code": 503,
+    "message": "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.",
+    "status": "UNAVAILABLE"
+  }
+}`
 }
 
 func assertFileLink(t *testing.T, output, path string) {

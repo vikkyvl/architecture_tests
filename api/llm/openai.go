@@ -62,12 +62,24 @@ type oResponse struct {
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *oUsage `json:"usage,omitempty"`
+}
+
+type oUsage struct {
+	PromptTokens        int               `json:"prompt_tokens,omitempty"`
+	CompletionTokens    int               `json:"completion_tokens,omitempty"`
+	PromptTokensDetails *oPromptTokenDtls `json:"prompt_tokens_details,omitempty"`
+}
+
+type oPromptTokenDtls struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
 type OpenAIClient struct {
-	apiKey string
-	model  string
-	http   *httpclient.Client
+	apiKey                  string
+	model                   string
+	http                    *httpclient.Client
+	respectRateLimitHeaders bool
 }
 
 func NewOpenAIClient(apiKey, model string) (*OpenAIClient, error) {
@@ -75,18 +87,42 @@ func NewOpenAIClient(apiKey, model string) (*OpenAIClient, error) {
 }
 
 func NewOpenAIClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*OpenAIClient, error) {
+	return NewOpenAIClientWithOptions(apiKey, model, RuntimeOptions{}, rateLimitHook)
+}
+
+var openAIRateLimitHeaders = httpclient.RateLimitHeaders{
+	RequestsRemaining: c.HeaderOpenAIRequestsRemaining,
+	TokensRemaining:   c.HeaderOpenAITokensRemaining,
+	RequestsReset:     c.HeaderOpenAIRequestsReset,
+	TokensReset:       c.HeaderOpenAITokensReset,
+	TokenThreshold:    c.TailTokenThreshold,
+}
+
+func NewOpenAIClientWithOptions(apiKey, model string, opts RuntimeOptions, rateLimitHook func(time.Duration)) (*OpenAIClient, error) {
 	cfg, err := newProviderClientConfig(
 		apiKey, model, c.EnvOpenAIKey, c.OpenAIModel,
-		c.OpenAITimeout, c.OpenAIMaxRetries, c.OpenAIRetryWait,
+		c.OpenAITimeout,
+		opts.retries(c.OpenAIMaxRetries),
+		opts.retryWait(c.OpenAIRetryWait),
 		rateLimitHook,
 	)
 	if err != nil {
 		return nil, err
 	}
+	if opts.RespectRateLimitHeaders {
+		cfg.http.EnablePreemptiveSleep(openAIRateLimitHeaders)
+	}
+	if opts.RateLimitObserver != nil {
+		cfg.http.WithRateLimitObserver(opts.RateLimitObserver)
+	}
+	if opts.PreemptiveSleepObserver != nil {
+		cfg.http.WithPreemptiveSleepObserver(opts.PreemptiveSleepObserver)
+	}
 	return &OpenAIClient{
-		apiKey: cfg.apiKey,
-		model:  cfg.model,
-		http:   cfg.http,
+		apiKey:                  cfg.apiKey,
+		model:                   cfg.model,
+		http:                    cfg.http,
+		respectRateLimitHeaders: opts.RespectRateLimitHeaders,
 	}, nil
 }
 
@@ -134,10 +170,10 @@ func (o *OpenAIClient) toOpenAI(req Request) oRequest {
 		MaxTokens: req.MaxTokens,
 	}
 
-	if req.System != "" {
+	if sys := SystemText(req.System); sys != "" {
 		or.Messages = append(or.Messages, oMessage{
 			Role:    c.RoleSystem,
-			Content: req.System,
+			Content: sys,
 		})
 	}
 
@@ -227,6 +263,15 @@ func (o *OpenAIClient) fromOpenAI(or oResponse) *Response {
 	resp := &Response{
 		Role:       c.RoleAssistant,
 		StopReason: c.StopReasonEndTurn,
+	}
+	if or.Usage != nil {
+		resp.Usage = Usage{
+			InputTokens:  or.Usage.PromptTokens,
+			OutputTokens: or.Usage.CompletionTokens,
+		}
+		if or.Usage.PromptTokensDetails != nil {
+			resp.Usage.CacheReadTokens = or.Usage.PromptTokensDetails.CachedTokens
+		}
 	}
 	if len(or.Choices) == 0 {
 		return resp

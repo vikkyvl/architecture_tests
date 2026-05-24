@@ -29,13 +29,25 @@ func NewGeminiClient(apiKey, model string) (*GeminiClient, error) {
 }
 
 func NewGeminiClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*GeminiClient, error) {
+	return NewGeminiClientWithOptions(apiKey, model, RuntimeOptions{}, rateLimitHook)
+}
+
+func NewGeminiClientWithOptions(apiKey, model string, opts RuntimeOptions, rateLimitHook func(time.Duration)) (*GeminiClient, error) {
 	cfg, err := newProviderClientConfig(
 		apiKey, model, c.EnvGeminiKey, c.GeminiModel,
-		c.GeminiTimeout, c.GeminiMaxRetries, c.GeminiRetryWait,
+		c.GeminiTimeout,
+		opts.retries(c.GeminiMaxRetries),
+		opts.retryWait(c.GeminiRetryWait),
 		rateLimitHook,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if opts.RateLimitObserver != nil {
+		cfg.http.WithRateLimitObserver(opts.RateLimitObserver)
+	}
+	if opts.PreemptiveSleepObserver != nil {
+		cfg.http.WithPreemptiveSleepObserver(opts.PreemptiveSleepObserver)
 	}
 	return &GeminiClient{
 		apiKey: cfg.apiKey,
@@ -118,6 +130,12 @@ type gResponse struct {
 	Candidates []struct {
 		Content gContent `json:"content"`
 	} `json:"candidates"`
+	UsageMetadata *gUsageMetadata `json:"usageMetadata,omitempty"`
+}
+type gUsageMetadata struct {
+	PromptTokenCount        int `json:"promptTokenCount,omitempty"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount,omitempty"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount,omitempty"`
 }
 
 func (g *GeminiClient) toGemini(req Request) gRequest {
@@ -126,11 +144,11 @@ func (g *GeminiClient) toGemini(req Request) gRequest {
 			MaxOutputTokens: req.MaxTokens,
 		},
 	}
-	if req.System != "" {
+	if sys := SystemText(req.System); sys != "" {
 		gr.SystemInstruction = &gContent{
 			Parts: []gPart{
 				{
-					Text: req.System,
+					Text: sys,
 				},
 			},
 		}
@@ -204,6 +222,13 @@ func (g *GeminiClient) fromGemini(gr gResponse) *Response {
 	resp := &Response{
 		Role:       c.RoleAssistant,
 		StopReason: c.StopReasonEndTurn,
+	}
+	if gr.UsageMetadata != nil {
+		resp.Usage = Usage{
+			InputTokens:     gr.UsageMetadata.PromptTokenCount,
+			OutputTokens:    gr.UsageMetadata.CandidatesTokenCount,
+			CacheReadTokens: gr.UsageMetadata.CachedContentTokenCount,
+		}
 	}
 	if len(gr.Candidates) == 0 {
 		return resp

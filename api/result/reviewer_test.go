@@ -1,11 +1,100 @@
 package result_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/archguard/project/api/result"
+	c "github.com/archguard/project/shared/constants"
 	"github.com/archguard/project/shared/models"
 )
+
+func TestReviewerComputesCacheHitRatio(t *testing.T) {
+	r := result.NewReviewer()
+	input := &models.AnalysisResult{
+		Violations: []models.Violation{
+			{File: "a.go", Line: 1, Rule: "r", Severity: "high", Category: "x"},
+		},
+		AuditLog: []models.AuditEntry{
+			{ToolName: c.EventLLMTurn, InputTokens: 1000, CachedInputTokens: 0},
+			{ToolName: c.EventLLMTurn, InputTokens: 200, CachedInputTokens: 800},
+			{ToolName: c.EventLLMTurn, InputTokens: 100, CachedInputTokens: 900},
+			{ToolName: c.ToolReadFile, ResultSize: 500},
+		},
+	}
+	r.Process(input)
+	want := 1700.0 / 3000.0
+	if math.Abs(input.Metrics.CacheHitRatio-want) > 1e-9 {
+		t.Errorf("CacheHitRatio = %f, want %f", input.Metrics.CacheHitRatio, want)
+	}
+}
+
+func TestReviewerCacheHitRatioZeroWhenNoLLMTurns(t *testing.T) {
+	r := result.NewReviewer()
+	input := &models.AnalysisResult{
+		AuditLog: []models.AuditEntry{
+			{ToolName: c.ToolReadFile, ResultSize: 500},
+		},
+	}
+	r.Process(input)
+	if input.Metrics.CacheHitRatio != 0 {
+		t.Errorf("CacheHitRatio = %f, want 0 when no llm_turn entries", input.Metrics.CacheHitRatio)
+	}
+}
+
+func TestReviewerCountsRateLimitHits(t *testing.T) {
+	r := result.NewReviewer()
+	input := &models.AnalysisResult{
+		AuditLog: []models.AuditEntry{
+			{ToolName: c.EventRateLimit, Arguments: c.RateLimitKind429},
+			{ToolName: c.EventLLMTurn, InputTokens: 1000},
+			{ToolName: c.EventRateLimit, Arguments: c.RateLimitKindOverloaded},
+			{ToolName: c.EventRateLimit, Arguments: c.RateLimitKind429},
+		},
+	}
+	r.Process(input)
+	if input.Metrics.RateLimitHits != 3 {
+		t.Errorf("RateLimitHits = %d, want 3", input.Metrics.RateLimitHits)
+	}
+}
+
+func TestReviewerRateLimitHitsZeroByDefault(t *testing.T) {
+	r := result.NewReviewer()
+	input := &models.AnalysisResult{}
+	r.Process(input)
+	if input.Metrics.RateLimitHits != 0 {
+		t.Errorf("RateLimitHits = %d, want 0 on empty audit log", input.Metrics.RateLimitHits)
+	}
+}
+
+func TestCountPreemptiveSleeps(t *testing.T) {
+	r := result.NewReviewer()
+	input := &models.AnalysisResult{
+		AuditLog: []models.AuditEntry{
+			{ToolName: c.EventPreemptiveSleep, Arguments: "1s"},
+			{ToolName: c.EventRateLimit, Arguments: c.RateLimitKind429},
+			{ToolName: c.EventPreemptiveSleep, Arguments: "2s"},
+			{ToolName: c.EventLLMTurn, InputTokens: 100},
+			{ToolName: c.EventPreemptiveSleep, Arguments: "3s"},
+		},
+	}
+	r.Process(input)
+	if input.Metrics.PreemptiveSleeps != 3 {
+		t.Errorf("PreemptiveSleeps = %d, want 3", input.Metrics.PreemptiveSleeps)
+	}
+	if input.Metrics.RateLimitHits != 1 {
+		t.Errorf("RateLimitHits = %d, want 1 (must not double-count preemptive)", input.Metrics.RateLimitHits)
+	}
+}
+
+func TestReviewerPreemptiveSleepsZeroByDefault(t *testing.T) {
+	r := result.NewReviewer()
+	input := &models.AnalysisResult{}
+	r.Process(input)
+	if input.Metrics.PreemptiveSleeps != 0 {
+		t.Errorf("PreemptiveSleeps = %d, want 0 on empty audit log", input.Metrics.PreemptiveSleeps)
+	}
+}
 
 func TestReviewerDedup(t *testing.T) {
 	r := result.NewReviewer()

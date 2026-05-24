@@ -25,22 +25,26 @@ func NewProvider(provider, apiKey, model string) (Provider, error) {
 }
 
 func NewProviderWithRateLimitHook(provider, apiKey, model string, rateLimitHook func(time.Duration)) (Provider, error) {
+	return NewProviderWithOptions(provider, apiKey, model, RuntimeOptions{}, rateLimitHook)
+}
+
+func NewProviderWithOptions(provider, apiKey, model string, opts RuntimeOptions, rateLimitHook func(time.Duration)) (Provider, error) {
 	switch provider {
 	case c.ProviderAnthropic:
-		return NewAnthropicClientWithRateLimitHook(apiKey, model, rateLimitHook)
+		return NewAnthropicClientWithOptions(apiKey, model, opts, rateLimitHook)
 	case c.ProviderGemini:
-		return NewGeminiClientWithRateLimitHook(apiKey, model, rateLimitHook)
+		return NewGeminiClientWithOptions(apiKey, model, opts, rateLimitHook)
 	case c.ProviderOpenAI:
-		return NewOpenAIClientWithRateLimitHook(apiKey, model, rateLimitHook)
+		return NewOpenAIClientWithOptions(apiKey, model, opts, rateLimitHook)
 	case "":
 		if apiKey != "" || os.Getenv(c.EnvAnthropicKey) != "" {
-			return NewAnthropicClientWithRateLimitHook(apiKey, model, rateLimitHook)
+			return NewAnthropicClientWithOptions(apiKey, model, opts, rateLimitHook)
 		}
 		if os.Getenv(c.EnvGeminiKey) != "" {
-			return NewGeminiClientWithRateLimitHook("", model, rateLimitHook)
+			return NewGeminiClientWithOptions("", model, opts, rateLimitHook)
 		}
 		if os.Getenv(c.EnvOpenAIKey) != "" {
-			return NewOpenAIClientWithRateLimitHook("", model, rateLimitHook)
+			return NewOpenAIClientWithOptions("", model, opts, rateLimitHook)
 		}
 		return nil, apperrors.Validation(fmt.Sprintf(errNoAPIKeyFound, c.EnvAnthropicKey, c.EnvGeminiKey, c.EnvOpenAIKey))
 	default:

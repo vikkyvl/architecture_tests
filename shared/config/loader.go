@@ -72,5 +72,12 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	if err := validateRuntime(&cfg.Runtime); err != nil {
+		return err
+	}
+	if err := applyRuntimeProfile(&cfg.Runtime); err != nil {
+		return err
+	}
+
 	return nil
 }

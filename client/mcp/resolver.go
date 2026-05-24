@@ -38,6 +38,7 @@ const (
 	errReadFile                   = "failed to read %s: %v"
 	errFileNotFoundDisplay        = "file not found: %s"
 	errFileTooLarge               = "file too large (%d bytes); max %d bytes"
+	maxFileBytesSuffixFmt         = "\n...\n[file truncated after %d bytes; %d bytes remain — request specific line ranges if you need the rest]"
 	errSensitivePath              = "blocked sensitive path: %s"
 	lineNumberFormat              = "%4d | %s\n"
 	lineSeparator                 = "\n"
@@ -63,6 +64,7 @@ const (
 	phpNamespaceSeparator         = "\\"
 	pathSeparator                 = "/"
 	maxReadFileBytes              = 10 * 1024 * 1024
+	readFileDedupStubFmt          = "[dedup: file %s (%d bytes) already returned earlier in this run; refer to the prior tool_result for content]"
 )
 
 type ConsentChecker interface {
@@ -70,7 +72,7 @@ type ConsentChecker interface {
 }
 
 type AuditLogger interface {
-	Record(toolName, args, decision string, size int, err error)
+	Record(toolName, args, decision string, size int, err error, dedup bool)
 }
 
 type ExternalSearcher interface {
@@ -78,16 +80,25 @@ type ExternalSearcher interface {
 }
 
 type Resolver struct {
-	cfg         *config.Config
-	projectPath string
-	docsPath    string
-	extensions  []string
-	consent     ConsentChecker
-	auditLog    AuditLogger
-	externals   map[string]ExternalSearcher
-	mu          sync.Mutex
-	violations  []models.Violation
-	nextID      int
+	cfg             *config.Config
+	projectPath     string
+	docsPath        string
+	extensions      []string
+	consent         ConsentChecker
+	auditLog        AuditLogger
+	externals       map[string]ExternalSearcher
+	mu              sync.Mutex
+	violations      []models.Violation
+	nextID          int
+	readFiles       map[string]readFileEntry
+	readFilesMu     sync.Mutex
+	readTurn        int
+	keepWindowTurns int
+}
+
+type readFileEntry struct {
+	Turn int
+	Size int
 }
 
 type ToolDefinition struct {
@@ -96,15 +107,17 @@ type ToolDefinition struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 
-func NewResolver(cfg *config.Config, projectPath, docsPath string, exts []string, cm ConsentChecker, al AuditLogger, externals map[string]ExternalSearcher) *Resolver {
+func NewResolver(cfg *config.Config, projectPath, docsPath string, exts []string, cm ConsentChecker, al AuditLogger, externals map[string]ExternalSearcher, keepWindowTurns int) *Resolver {
 	return &Resolver{
-		cfg:         cfg,
-		projectPath: projectPath,
-		docsPath:    docsPath,
-		extensions:  exts,
-		consent:     cm,
-		auditLog:    al,
-		externals:   externals,
+		cfg:             cfg,
+		projectPath:     projectPath,
+		docsPath:        docsPath,
+		extensions:      exts,
+		consent:         cm,
+		auditLog:        al,
+		externals:       externals,
+		readFiles:       make(map[string]readFileEntry),
+		keepWindowTurns: keepWindowTurns,
 	}
 }
 
@@ -123,13 +136,13 @@ func (r *Resolver) ListTools() []ToolDefinition {
 func (r *Resolver) ExecuteTool(toolName string, args map[string]interface{}, budget int) (string, error) {
 	decision := r.consent.Check(toolName, args, budget)
 	if decision == c.DecisionBlocked || decision == c.DecisionUserDenied {
-		r.auditLog.Record(toolName, fmtArgs(args), decision, 0, nil)
+		r.auditLog.Record(toolName, fmtArgs(args), decision, 0, nil, false)
 		msg := fmt.Sprintf(msgToolDenied, decision)
 		return msg, apperrors.PermissionDenied(msg)
 	}
 
-	result, err := r.dispatch(toolName, args)
-	r.auditLog.Record(toolName, fmtArgs(args), decision, len(result), err)
+	result, dedup, err := r.dispatch(toolName, args)
+	r.auditLog.Record(toolName, fmtArgs(args), decision, len(result), err, dedup)
 	return result, err
 }
 
@@ -149,28 +162,34 @@ func (r *Resolver) GetViolations() []models.Violation {
 	return out
 }
 
-func (r *Resolver) dispatch(tool string, args map[string]interface{}) (string, error) {
+func (r *Resolver) dispatch(tool string, args map[string]interface{}) (string, bool, error) {
 	switch tool {
 	case c.ToolGetProjectStructure:
-		return r.projectStructure()
+		res, err := r.projectStructure()
+		return res, false, err
 	case c.ToolReadFile:
 		p, _ := args[c.ArgPath].(string)
 		return r.readFile(p)
 	case c.ToolGetArchitectureRules:
-		return r.archRules()
+		res, err := r.archRules()
+		return res, false, err
 	case c.ToolGetClassDependencies:
 		cl, _ := args[c.ArgClass].(string)
-		return r.classDeps(cl)
+		res, err := r.classDeps(cl)
+		return res, false, err
 	case c.ToolGetDocumentation:
-		return r.documentation()
+		res, err := r.documentation()
+		return res, false, err
 	case c.ToolGetExternalContext:
 		query, _ := args[c.ArgQuery].(string)
 		system, _ := args[c.ArgSystem].(string)
-		return r.externalContext(query, system)
+		res, err := r.externalContext(query, system)
+		return res, false, err
 	case c.ToolReportViolation:
-		return r.reportViolation(args)
+		res, err := r.reportViolation(args)
+		return res, false, err
 	default:
-		return "", apperrors.Validation(fmt.Sprintf(errUnknownTool, tool))
+		return "", false, apperrors.Validation(fmt.Sprintf(errUnknownTool, tool))
 	}
 }
 

@@ -28,6 +28,20 @@ const (
 	HTTPHeaderCFAccessClientSec = "CF-Access-Client-Secret"
 	HTTPHeaderAuthorization     = "Authorization"
 	HTTPAuthBearer              = "Bearer "
+	HTTPHeaderRetryAfter        = "Retry-After"
+)
+
+const (
+	HTTPStatusOverloaded = 529
+)
+
+const (
+	EventLLMTurn            = "<llm_turn>"
+	EventRateLimit          = "<rate_limit>"
+	EventPreemptiveSleep    = "<preemptive_sleep>"
+	RateLimitKind429        = "rate_limited"
+	RateLimitKindOverloaded = "overloaded"
+	RateLimitKindPreemptive = "preemptive"
 )
 
 const (
