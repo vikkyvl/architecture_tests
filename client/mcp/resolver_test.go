@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/archguard/project/client/audit"
@@ -24,7 +25,7 @@ func newTestResolver(t *testing.T) (*mcp.Resolver, string) {
 	}
 	cm := consent.NewManager(false, dir, nil)
 	al := audit.NewLog()
-	return mcp.NewResolver(cfg, dir, "", nil, cm, al, nil), dir
+	return mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 0), dir
 }
 
 func TestReadFileBlocksTraversal(t *testing.T) {
@@ -68,7 +69,7 @@ func TestReadFileSuccess(t *testing.T) {
 	}
 	cm := consent.NewManager(false, dir, nil)
 	al := audit.NewLog()
-	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil)
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 0)
 
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
 	args := map[string]interface{}{
@@ -80,6 +81,217 @@ func TestReadFileSuccess(t *testing.T) {
 	}
 	if got == "" {
 		t.Error("expected non-empty result")
+	}
+}
+
+func TestReadFileTruncatesAtSoftCap(t *testing.T) {
+	dir := t.TempDir()
+	consentDir := filepath.Join(dir, ".archguard")
+	_ = os.MkdirAll(consentDir, 0700)
+	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
+		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
+
+	const softCap = 100
+	const originalSize = 500
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Name: "test", Language: "go"},
+		Runtime: config.RuntimeConfig{MaxFileBytes: softCap},
+	}
+	cm := consent.NewManager(false, dir, nil)
+	al := audit.NewLog()
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 0)
+
+	payload := make([]byte, originalSize)
+	for i := range payload {
+		payload[i] = 'a'
+	}
+	_ = os.WriteFile(filepath.Join(dir, "big.go"), payload, 0644)
+
+	got, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "big.go"}, 10)
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if !contains(got, "file truncated after 100 bytes; 400 bytes remain") {
+		t.Errorf("expected truncation suffix mentioning 100/400 bytes, got tail: %q", tail(got, 120))
+	}
+}
+
+func TestReadFileSkipsSoftCapWhenZero(t *testing.T) {
+	dir := t.TempDir()
+	consentDir := filepath.Join(dir, ".archguard")
+	_ = os.MkdirAll(consentDir, 0700)
+	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
+		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
+
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Name: "test", Language: "go"},
+	}
+	cm := consent.NewManager(false, dir, nil)
+	al := audit.NewLog()
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 0)
+
+	payload := make([]byte, 500)
+	for i := range payload {
+		payload[i] = 'a'
+	}
+	_ = os.WriteFile(filepath.Join(dir, "big.go"), payload, 0644)
+
+	got, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "big.go"}, 10)
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if contains(got, "file truncated") {
+		t.Errorf("MaxFileBytes=0 must disable truncation, got suffix: %q", tail(got, 120))
+	}
+}
+
+func TestReadFileDoesNotTruncateBelowSoftCap(t *testing.T) {
+	dir := t.TempDir()
+	consentDir := filepath.Join(dir, ".archguard")
+	_ = os.MkdirAll(consentDir, 0700)
+	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
+		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
+
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Name: "test", Language: "go"},
+		Runtime: config.RuntimeConfig{MaxFileBytes: 1000},
+	}
+	cm := consent.NewManager(false, dir, nil)
+	al := audit.NewLog()
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 0)
+
+	_ = os.WriteFile(filepath.Join(dir, "small.go"), []byte("package main"), 0644)
+
+	got, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "small.go"}, 10)
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if contains(got, "file truncated") {
+		t.Errorf("file smaller than cap must not be truncated, got: %q", tail(got, 120))
+	}
+}
+
+func contains(haystack, needle string) bool {
+	return strings.Contains(haystack, needle)
+}
+
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
+func TestReadFileDedupReturnsStubOnRepeat(t *testing.T) {
+	dir := t.TempDir()
+	consentDir := filepath.Join(dir, ".archguard")
+	_ = os.MkdirAll(consentDir, 0700)
+	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
+		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
+
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Name: "test", Language: "go"},
+	}
+	cm := consent.NewManager(false, dir, nil)
+	al := audit.NewLog()
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 8)
+
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644)
+
+	first, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "main.go"}, 10)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	if strings.Contains(first, "dedup:") {
+		t.Fatalf("first read must return content, not dedup stub: %q", first)
+	}
+
+	second, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "main.go"}, 10)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if !strings.Contains(second, "dedup:") {
+		t.Fatalf("repeat read within window must return dedup stub, got: %q", second)
+	}
+	if !strings.Contains(second, "main.go") {
+		t.Errorf("stub must reference the path: %q", second)
+	}
+
+	entries := al.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 audit entries, got %d", len(entries))
+	}
+	if entries[0].Dedup {
+		t.Errorf("first entry must have Dedup=false")
+	}
+	if !entries[1].Dedup {
+		t.Errorf("second entry must have Dedup=true")
+	}
+}
+
+func TestReadFileDedupAfterPruneReServes(t *testing.T) {
+	dir := t.TempDir()
+	consentDir := filepath.Join(dir, ".archguard")
+	_ = os.MkdirAll(consentDir, 0700)
+	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
+		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
+
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Name: "test", Language: "go"},
+	}
+	cm := consent.NewManager(false, dir, nil)
+	al := audit.NewLog()
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 2)
+
+	for _, name := range []string{"a.go", "b.go", "c.go", "d.go"} {
+		_ = os.WriteFile(filepath.Join(dir, name), []byte("package x\n"), 0644)
+	}
+
+	if _, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "a.go"}, 10); err != nil {
+		t.Fatalf("read a.go: %v", err)
+	}
+	for _, p := range []string{"b.go", "c.go", "d.go"} {
+		if _, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: p}, 10); err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+	}
+
+	got, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "a.go"}, 10)
+	if err != nil {
+		t.Fatalf("re-read a.go after window expiry: %v", err)
+	}
+	if strings.Contains(got, "dedup:") {
+		t.Fatalf("a.go fell outside keepWindowTurns=2 — must re-serve content, got stub: %q", got)
+	}
+
+	entries := al.Entries()
+	last := entries[len(entries)-1]
+	if last.Dedup {
+		t.Errorf("re-served entry must have Dedup=false, got true")
+	}
+}
+
+func TestReadFileDedupDisabledWhenKeepWindowZero(t *testing.T) {
+	dir := t.TempDir()
+	consentDir := filepath.Join(dir, ".archguard")
+	_ = os.MkdirAll(consentDir, 0700)
+	_ = os.WriteFile(filepath.Join(consentDir, "consent.yaml"),
+		[]byte("allowed:\n  - tool: read_file\n    pattern: all\n"), 0600)
+	cfg := &config.Config{Project: config.ProjectConfig{Name: "test", Language: "go"}}
+	cm := consent.NewManager(false, dir, nil)
+	al := audit.NewLog()
+	r := mcp.NewResolver(cfg, dir, "", nil, cm, al, nil, 0)
+
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
+
+	for i := 0; i < 3; i++ {
+		got, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "main.go"}, 10)
+		if err != nil {
+			t.Fatalf("iter %d: %v", i, err)
+		}
+		if strings.Contains(got, "dedup:") {
+			t.Fatalf("iter %d: keepWindowTurns=0 must disable dedup, got stub", i)
+		}
 	}
 }
 

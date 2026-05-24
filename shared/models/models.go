@@ -31,16 +31,24 @@ type AnalysisResult struct {
 }
 
 type Metrics struct {
-	TotalViolations int            `json:"total_violations"`
-	BySeverity      map[string]int `json:"by_severity"`
-	ByCategory      map[string]int `json:"by_category"`
+	TotalViolations  int            `json:"total_violations"`
+	BySeverity       map[string]int `json:"by_severity"`
+	ByCategory       map[string]int `json:"by_category"`
+	CacheHitRatio    float64        `json:"cache_hit_ratio,omitempty"`
+	RateLimitHits    int            `json:"rate_limit_hits,omitempty"`
+	PreemptiveSleeps int            `json:"preemptive_sleeps,omitempty"`
 }
 
 type AuditEntry struct {
-	Timestamp  time.Time `json:"timestamp"`
-	ToolName   string    `json:"tool_name"`
-	Arguments  string    `json:"arguments,omitempty"`
-	Decision   string    `json:"decision"`
-	ResultSize int       `json:"result_size"`
-	Error      string    `json:"error,omitempty"`
+	Timestamp             time.Time `json:"timestamp"`
+	ToolName              string    `json:"tool_name"`
+	Arguments             string    `json:"arguments,omitempty"`
+	Decision              string    `json:"decision"`
+	ResultSize            int       `json:"result_size"`
+	Error                 string    `json:"error,omitempty"`
+	InputTokens           int       `json:"input_tokens,omitempty"`
+	CachedInputTokens     int       `json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens int       `json:"cache_write_input_tokens,omitempty"`
+	PrunedTurns           int       `json:"pruned_turns,omitempty"`
+	Dedup                 bool      `json:"dedup,omitempty"`
 }

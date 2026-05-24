@@ -45,7 +45,10 @@ func isRetryableLLMError(err error) bool {
 	if !errors.As(err, &appErr) {
 		return false
 	}
-	if appErr.Kind == apperrors.KindRateLimited || appErr.Kind == apperrors.KindExternalService {
+	if appErr.Kind == apperrors.KindRateLimited {
+		return false
+	}
+	if appErr.Kind == apperrors.KindExternalService {
 		return true
 	}
 	msg := strings.ToLower(appErr.Error())

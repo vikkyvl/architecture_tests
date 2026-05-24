@@ -72,31 +72,73 @@ func readSourceFile(fullPath, displayPath string) ([]byte, error) {
 	return data, nil
 }
 
-func (r *Resolver) readFile(relPath string) (string, error) {
+func (r *Resolver) readFile(relPath string) (string, bool, error) {
 	if relPath == "" {
-		return "", apperrors.Validation(errPathRequired)
+		return "", false, apperrors.Validation(errPathRequired)
 	}
 	clean, err := cleanProjectPath(relPath)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	full := filepath.Join(r.projectPath, clean)
 	if err := ensureWithinProject(r.projectPath, full); err != nil {
-		return "", err
+		return "", false, err
 	}
+
+	if stub, ok := r.checkReadFileDedup(clean, relPath); ok {
+		return stub, true, nil
+	}
+
 	data, err := readSourceFile(full, relPath)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if len(data) > maxReadFileBytes {
-		return "", apperrors.Validation(fmt.Sprintf(errFileTooLarge, len(data), maxReadFileBytes))
+		return "", false, apperrors.Validation(fmt.Sprintf(errFileTooLarge, len(data), maxReadFileBytes))
 	}
+
+	originalBytes := len(data)
+	softCap := r.cfg.Runtime.MaxFileBytes
+	var truncationSuffix string
+	if softCap > 0 && originalBytes > softCap {
+		data = data[:softCap]
+		truncationSuffix = fmt.Sprintf(maxFileBytesSuffixFmt, softCap, originalBytes-softCap)
+	}
+
 	lines := strings.Split(string(data), lineSeparator)
 	var sb strings.Builder
 	for i, line := range lines {
 		fmt.Fprintf(&sb, lineNumberFormat, i+1, line)
 	}
-	return sb.String(), nil
+	if truncationSuffix != "" {
+		sb.WriteString(truncationSuffix)
+	}
+	r.recordReadFile(clean, originalBytes)
+	return sb.String(), false, nil
+}
+
+func (r *Resolver) checkReadFileDedup(cleanPath, displayPath string) (string, bool) {
+	if r.keepWindowTurns <= 0 {
+		return "", false
+	}
+	r.readFilesMu.Lock()
+	defer r.readFilesMu.Unlock()
+	entry, ok := r.readFiles[cleanPath]
+	if !ok {
+		return "", false
+	}
+	if r.readTurn-entry.Turn >= r.keepWindowTurns {
+		delete(r.readFiles, cleanPath)
+		return "", false
+	}
+	return fmt.Sprintf(readFileDedupStubFmt, displayPath, entry.Size), true
+}
+
+func (r *Resolver) recordReadFile(cleanPath string, size int) {
+	r.readFilesMu.Lock()
+	defer r.readFilesMu.Unlock()
+	r.readFiles[cleanPath] = readFileEntry{Turn: r.readTurn, Size: size}
+	r.readTurn++
 }
 
 func (r *Resolver) resolveFile(classOrPath string) (string, error) {

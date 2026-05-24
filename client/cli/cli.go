@@ -80,9 +80,20 @@ func RunReview(opts ReviewOptions) error {
 	consentMgr := consent.NewManager(opts.Interactive, opts.ProjectPath, allowedSystems)
 	auditLog := audit.NewLog()
 
-	var mcpResolver review.ToolRunner = mcp.NewResolver(cfg, opts.ProjectPath, opts.DocsPath, exts, consentMgr, auditLog, externals)
+	var mcpResolver review.ToolRunner = mcp.NewResolver(cfg, opts.ProjectPath, opts.DocsPath, exts, consentMgr, auditLog, externals, cfg.Runtime.KeepRecentTurns)
 
-	provider, err := llm.NewProviderWithRateLimitHook(opts.Provider, opts.APIKey, opts.Model, func(wait time.Duration) {
+	llmOpts := llm.RuntimeOptions{
+		MaxRetries:              cfg.Runtime.ProviderMaxRetries,
+		RetryWait:               cfg.Runtime.ProviderRetryWait,
+		AnthropicCacheTail:      derefBool(cfg.Runtime.AnthropicCacheTail),
+		RespectRateLimitHeaders: derefBool(cfg.Runtime.RespectRateLimitHeaders),
+		RateLimitObserver:       auditLog.RecordRateLimit,
+		PreemptiveSleepObserver: func(wait time.Duration) {
+			auditLog.RecordPreemptiveSleep(wait)
+			animateProactivePauseWait(os.Stderr, wait)
+		},
+	}
+	provider, err := llm.NewProviderWithOptions(opts.Provider, opts.APIKey, opts.Model, llmOpts, func(wait time.Duration) {
 		animateRateLimitWait(os.Stderr, wait)
 	})
 	if err != nil {
@@ -114,10 +125,12 @@ func RunReview(opts ReviewOptions) error {
 		timeout:      opts.Timeout,
 	})
 	run, err := engine.Run(review.Options{
-		SystemPrompt:   systemPrompt,
-		InitialContext: promptExternalContext(cfg.External, cfg, mcpResolver, opts.Interactive),
-		MaxToolCalls:   opts.MaxToolCalls,
-		Timeout:        opts.Timeout,
+		SystemPrompt:    systemPrompt,
+		InitialContext:  promptExternalContext(cfg.External, cfg, mcpResolver, opts.Interactive),
+		MaxToolCalls:    opts.MaxToolCalls,
+		Timeout:         opts.Timeout,
+		PruneAfterTurns: cfg.Runtime.PruneAfterTurns,
+		KeepRecentTurns: cfg.Runtime.KeepRecentTurns,
 	})
 	if err != nil {
 		return fmt.Errorf(errLLMRequest, err)
@@ -152,9 +165,24 @@ func RunReview(opts ReviewOptions) error {
 	return nil
 }
 
+func derefBool(p *bool) bool {
+	if p == nil {
+		return false
+	}
+	return *p
+}
+
 func animateRateLimitWait(out io.Writer, wait time.Duration) {
+	animateWait(out, wait, renderRateLimitWaitFrame, renderRateLimitResume)
+}
+
+func animateProactivePauseWait(out io.Writer, wait time.Duration) {
+	animateWait(out, wait, renderProactivePauseWaitFrame, renderProactivePauseResume)
+}
+
+func animateWait(out io.Writer, wait time.Duration, frameFn func(time.Duration, string) string, doneFn func(time.Duration) string) {
 	if wait <= 0 {
-		fmt.Fprintln(out, renderRateLimitResume(wait))
+		fmt.Fprintln(out, doneFn(wait))
 		return
 	}
 
@@ -170,16 +198,16 @@ func animateRateLimitWait(out io.Writer, wait time.Duration) {
 			break
 		}
 		fmt.Fprint(out, terminalClearLine)
-		fmt.Fprint(out, renderRateLimitWaitFrame(remaining, string(rateLimitFrames[frame%len(rateLimitFrames)])))
+		fmt.Fprint(out, frameFn(remaining, string(rateLimitFrames[frame%len(rateLimitFrames)])))
 		select {
 		case <-timer.C:
 			fmt.Fprint(out, terminalClearLine)
-			fmt.Fprintln(out, renderRateLimitResume(wait))
+			fmt.Fprintln(out, doneFn(wait))
 			return
 		case <-ticker.C:
 		}
 	}
 
 	fmt.Fprint(out, terminalClearLine)
-	fmt.Fprintln(out, renderRateLimitResume(wait))
+	fmt.Fprintln(out, doneFn(wait))
 }

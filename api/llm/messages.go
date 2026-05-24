@@ -7,18 +7,29 @@ import (
 )
 
 const (
-	contentBlockJSONType      = "type"
-	contentBlockJSONToolUseID = "tool_use_id"
-	contentBlockJSONContent   = "content"
-	contentBlockJSONIsError   = "is_error"
+	contentBlockJSONType         = "type"
+	contentBlockJSONToolUseID    = "tool_use_id"
+	contentBlockJSONContent      = "content"
+	contentBlockJSONIsError      = "is_error"
+	contentBlockJSONCacheControl = "cache_control"
 )
 
 type Request struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system,omitempty"`
-	Messages  []Message `json:"messages"`
-	Tools     []Tool    `json:"tools,omitempty"`
+	Model     string        `json:"model"`
+	MaxTokens int           `json:"max_tokens"`
+	System    []SystemBlock `json:"system,omitempty"`
+	Messages  []Message     `json:"messages"`
+	Tools     []Tool        `json:"tools,omitempty"`
+}
+
+type SystemBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
+}
+
+type CacheControl struct {
+	Type string `json:"type"`
 }
 
 type Message struct {
@@ -27,14 +38,15 @@ type Message struct {
 }
 
 type ContentBlock struct {
-	Type      string
-	Text      string
-	ID        string
-	Name      string
-	Input     json.RawMessage
-	ToolUseID string
-	Content   string
-	IsError   bool
+	Type         string
+	Text         string
+	ID           string
+	Name         string
+	Input        json.RawMessage
+	ToolUseID    string
+	Content      string
+	IsError      bool
+	CacheControl *CacheControl
 }
 
 type toolUseContentBlockJSON struct {
@@ -67,6 +79,9 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 		if b.IsError {
 			m[contentBlockJSONIsError] = true
 		}
+		if b.CacheControl != nil {
+			m[contentBlockJSONCacheControl] = b.CacheControl
+		}
 		return json.Marshal(m)
 	default:
 		return json.Marshal(textContentBlockJSON{
@@ -78,14 +93,15 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 
 func (b *ContentBlock) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type      string          `json:"type"`
-		Text      string          `json:"text"`
-		ID        string          `json:"id"`
-		Name      string          `json:"name"`
-		Input     json.RawMessage `json:"input"`
-		ToolUseID string          `json:"tool_use_id"`
-		Content   string          `json:"content"`
-		IsError   bool            `json:"is_error"`
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		ID           string          `json:"id"`
+		Name         string          `json:"name"`
+		Input        json.RawMessage `json:"input"`
+		ToolUseID    string          `json:"tool_use_id"`
+		Content      string          `json:"content"`
+		IsError      bool            `json:"is_error"`
+		CacheControl *CacheControl   `json:"cache_control"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -98,6 +114,7 @@ func (b *ContentBlock) UnmarshalJSON(data []byte) error {
 	b.ToolUseID = raw.ToolUseID
 	b.Content = raw.Content
 	b.IsError = raw.IsError
+	b.CacheControl = raw.CacheControl
 	return nil
 }
 
@@ -110,14 +127,46 @@ type Response struct {
 }
 
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	CacheCreationTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
 type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	CacheControl *CacheControl   `json:"cache_control,omitempty"`
+}
+
+func NewSystemBlock(text string, cache bool) SystemBlock {
+	sb := SystemBlock{
+		Type: c.ContentTypeText,
+		Text: text,
+	}
+	if cache {
+		sb.CacheControl = &CacheControl{Type: c.CacheControlEphemeral}
+	}
+	return sb
+}
+
+func SystemText(blocks []SystemBlock) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+	if len(blocks) == 1 {
+		return blocks[0].Text
+	}
+	var total int
+	for _, b := range blocks {
+		total += len(b.Text)
+	}
+	out := make([]byte, 0, total)
+	for _, b := range blocks {
+		out = append(out, b.Text...)
+	}
+	return string(out)
 }
 
 func NewTextBlock(text string) ContentBlock {

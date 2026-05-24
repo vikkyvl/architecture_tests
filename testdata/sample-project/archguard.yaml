@@ -46,3 +46,18 @@ domain_context:
     - { id: "fintech_audit_trail", description: "Financial transactions must have audit trail", severity: "critical" }
     - { id: "fintech_data_isolation", description: "Payment data must not appear in logs", severity: "critical" }
     - { id: "fintech_transaction_integrity", description: "Balance changes must be in DB transaction", severity: "high" }
+
+# Optional runtime tuning. Omit the section to use the "auto" profile defaults.
+# Profiles encode per-tier policy: aggressive (paid headroom, short retry budget),
+# auto (typical dev key, prompt-cache + preemptive sleep on), conservative (free/demo tier).
+# Field-level entries override their profile preset.
+#
+# runtime:
+#   profile: auto                       # auto | conservative | aggressive
+#   max_file_bytes: 65536               # read_file soft cap; over this, truncate with line-range hint
+#   prune_after_turns: 10               # start eliding old tool_result blocks after N assistant turns
+#   keep_recent_turns: 4                # never prune the last N turns
+#   provider_max_retries: 5             # httpclient retry budget on 429 / 529
+#   provider_retry_wait: 20s            # base for exponential+jitter backoff (Retry-After takes priority)
+#   anthropic_cache_tail: true          # ephemeral cache marker on tail tool_result (turn ≥ 2)
+#   respect_rate_limit_headers: true    # preemptive sleep when x-ratelimit-* signals near-empty bucket
