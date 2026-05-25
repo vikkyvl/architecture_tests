@@ -1,6 +1,15 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+type ToolDefinition struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
 
 type Violation struct {
 	ID          string `json:"id"`

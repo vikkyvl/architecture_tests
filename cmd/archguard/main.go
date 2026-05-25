@@ -4,46 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/archguard/project/client/cli"
-	"github.com/archguard/project/shared/config"
+	"github.com/archguard/project/config"
+	"github.com/archguard/project/delivery/cli"
+	"github.com/archguard/project/delivery/output"
 	c "github.com/archguard/project/shared/constants"
 	"github.com/spf13/cobra"
-)
-
-const (
-	rootShortDescription    = "ArchGuard Analyzer - architectural analyzer tool powered by AI"
-	analyzeCommandUse       = "analyze"
-	analyzeCommandShort     = "Analyze project architecture and report violations"
-	projectFlagName         = "project"
-	projectFlagShorthand    = "p"
-	projectFlagDefault      = "."
-	projectFlagDescription  = "Path to the project codebase"
-	rulesFlagName           = "rules"
-	rulesFlagShorthand      = "r"
-	rulesFlagDescription    = "Path to YAML rules file"
-	docsFlagName            = "docs"
-	docsFlagShorthand       = "d"
-	docsFlagDescription     = "Path to project documentation"
-	outputJSONFlagName      = "output-json"
-	outputJSONFlagShorthand = "j"
-	outputJSONFlagDefault   = "report.json"
-	outputJSONFlagDesc      = "JSON report path"
-	outputMDFlagName        = "output-md"
-	outputMDFlagShorthand   = "m"
-	outputMDFlagDefault     = "report.md"
-	outputMDFlagDesc        = "Markdown report path"
-	providerFlagName        = "provider"
-	providerFlagDesc        = "LLM provider: anthropic / gemini / openai"
-	apiKeyFlagName          = "api-key"
-	apiKeyFlagDesc          = "API key (or use .env)"
-	modelFlagName           = "model"
-	modelFlagDesc           = "Model override"
-	maxToolCallsFlagName    = "max-tool-calls"
-	maxToolCallsFlagDesc    = "Max tool calls"
-	timeoutFlagName         = "timeout"
-	timeoutFlagDesc         = "Analysis timeout"
-	interactiveFlagName     = "interactive"
-	interactiveFlagDesc     = "Prompt for consent-required tool calls"
 )
 
 func main() {
@@ -58,7 +23,7 @@ func main() {
 	rootCmd.AddCommand(analyzeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, cli.RenderError(err))
+		fmt.Fprintln(os.Stderr, output.RenderError(err))
 		os.Exit(1)
 	}
 }

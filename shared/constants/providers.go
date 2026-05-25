@@ -11,7 +11,7 @@ const (
 const (
 	AnthropicBaseURL    = "https://api.anthropic.com/v1/messages"
 	AnthropicVersion    = "2023-06-01"
-	AnthropicModel      = "claude-opus-4-1-20250805"
+	AnthropicModel      = "claude-opus-4-7"
 	AnthropicTimeout    = 120 * time.Second
 	AnthropicMaxRetries = 5
 	AnthropicRetryWait  = 20 * time.Second
