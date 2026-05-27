@@ -66,6 +66,8 @@ func (c *MCPClient) Search(query string) (string, error) {
 }
 
 func (c *MCPClient) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.stdin != nil {
 		c.stdin.Close()
 	}

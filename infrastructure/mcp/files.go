@@ -202,11 +202,11 @@ func cleanProjectPath(relPath string) (string, error) {
 func ensureWithinProject(projectPath, fullPath string) error {
 	absProj, err := filepath.Abs(projectPath)
 	if err != nil {
-		return apperrors.PermissionDenied(errPathTraversal)
+		return apperrors.PermissionDenied(fmt.Sprintf("%s: %v", errPathTraversal, err))
 	}
 	absFile, err := filepath.Abs(fullPath)
 	if err != nil {
-		return apperrors.PermissionDenied(errPathTraversal)
+		return apperrors.PermissionDenied(fmt.Sprintf("%s: %v", errPathTraversal, err))
 	}
 	rel, err := filepath.Rel(absProj, absFile)
 	if err != nil || strings.HasPrefix(rel, pathTraversalPrefix) || filepath.IsAbs(rel) {
