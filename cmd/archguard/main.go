@@ -11,6 +11,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func estimateCmd() *cobra.Command {
+	var opts cli.EstimateOptions
+
+	cmd := &cobra.Command{
+		Use:   estimateCommandUse,
+		Short: estimateCommandShort,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunEstimate(opts)
+		},
+	}
+
+	cmd.Flags().StringVarP(&opts.ProjectPath, projectFlagName, projectFlagShorthand, projectFlagDefault, projectFlagDescription)
+	cmd.Flags().StringVarP(&opts.RulesPath, rulesFlagName, rulesFlagShorthand, "", rulesFlagDescription)
+	cmd.Flags().IntVar(&opts.MaxToolCalls, maxToolCallsFlagName, c.DefaultMaxToolCalls, maxToolCallsFlagDesc)
+	_ = cmd.MarkFlagRequired(rulesFlagName)
+
+	return cmd
+}
+
 func main() {
 	config.LoadEnv(c.DefaultEnvFile)
 
@@ -21,6 +40,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	rootCmd.AddCommand(analyzeCmd())
+	rootCmd.AddCommand(estimateCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, output.RenderError(err))
@@ -50,6 +70,7 @@ func analyzeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&opts.MaxToolCalls, maxToolCallsFlagName, c.DefaultMaxToolCalls, maxToolCallsFlagDesc)
 	cmd.Flags().DurationVar(&opts.Timeout, timeoutFlagName, c.DefaultTimeout, timeoutFlagDesc)
 	cmd.Flags().BoolVar(&opts.Interactive, interactiveFlagName, true, interactiveFlagDesc)
+	cmd.Flags().StringVar(&opts.ResumePath, resumeFlagName, "", resumeFlagDesc)
 	_ = cmd.MarkFlagRequired(rulesFlagName)
 
 	return cmd

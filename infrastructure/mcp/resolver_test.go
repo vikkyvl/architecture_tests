@@ -1,6 +1,7 @@
 package mcp_test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ import (
 func newTestResolver(t *testing.T) (*mcp.Resolver, string) {
 	t.Helper()
 	dir := t.TempDir()
-	cm := consent.NewManager(false, dir, nil)
+	cm := consent.NewManager(false, dir, nil, io.Discard)
 	al := audit.NewLog()
 	return mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go"}, cm, al, nil), dir
 }
@@ -56,7 +57,7 @@ func TestReadFileSuccess(t *testing.T) {
 	dir := t.TempDir()
 	setupReadFileConsent(t, dir)
 	r := mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go"},
-		consent.NewManager(false, dir, nil), audit.NewLog(), nil)
+		consent.NewManager(false, dir, nil, io.Discard), audit.NewLog(), nil)
 
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
 	got, err := r.ExecuteTool(c.ToolReadFile, map[string]interface{}{c.ArgPath: "main.go"}, 10)
@@ -74,7 +75,7 @@ func TestReadFileTruncatesAtSoftCap(t *testing.T) {
 	const softCap = 100
 	const originalSize = 500
 	r := mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go", MaxFileBytes: softCap},
-		consent.NewManager(false, dir, nil), audit.NewLog(), nil)
+		consent.NewManager(false, dir, nil, io.Discard), audit.NewLog(), nil)
 
 	payload := make([]byte, originalSize)
 	for i := range payload {
@@ -95,7 +96,7 @@ func TestReadFileSkipsSoftCapWhenZero(t *testing.T) {
 	dir := t.TempDir()
 	setupReadFileConsent(t, dir)
 	r := mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go"},
-		consent.NewManager(false, dir, nil), audit.NewLog(), nil)
+		consent.NewManager(false, dir, nil, io.Discard), audit.NewLog(), nil)
 
 	payload := make([]byte, 500)
 	for i := range payload {
@@ -116,7 +117,7 @@ func TestReadFileDoesNotTruncateBelowSoftCap(t *testing.T) {
 	dir := t.TempDir()
 	setupReadFileConsent(t, dir)
 	r := mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go", MaxFileBytes: 1000},
-		consent.NewManager(false, dir, nil), audit.NewLog(), nil)
+		consent.NewManager(false, dir, nil, io.Discard), audit.NewLog(), nil)
 
 	_ = os.WriteFile(filepath.Join(dir, "small.go"), []byte("package main"), 0644)
 
@@ -145,7 +146,7 @@ func TestReadFileDedupReturnsStubOnRepeat(t *testing.T) {
 	setupReadFileConsent(t, dir)
 	al := audit.NewLog()
 	r := mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go", KeepWindowTurns: 8},
-		consent.NewManager(false, dir, nil), al, nil)
+		consent.NewManager(false, dir, nil, io.Discard), al, nil)
 
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644)
 
@@ -185,7 +186,7 @@ func TestReadFileDedupAfterPruneReServes(t *testing.T) {
 	setupReadFileConsent(t, dir)
 	al := audit.NewLog()
 	r := mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go", KeepWindowTurns: 2},
-		consent.NewManager(false, dir, nil), al, nil)
+		consent.NewManager(false, dir, nil, io.Discard), al, nil)
 
 	for _, name := range []string{"a.go", "b.go", "c.go", "d.go"} {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte("package x\n"), 0644)
@@ -219,7 +220,7 @@ func TestReadFileDedupDisabledWhenKeepWindowZero(t *testing.T) {
 	dir := t.TempDir()
 	setupReadFileConsent(t, dir)
 	r := mcp.NewResolver(mcp.ResolverConfig{ProjectPath: dir, Language: "go"},
-		consent.NewManager(false, dir, nil), audit.NewLog(), nil)
+		consent.NewManager(false, dir, nil, io.Discard), audit.NewLog(), nil)
 
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
 
@@ -284,7 +285,7 @@ func TestArchRulesContainsConfiguredData(t *testing.T) {
 				{ID: "dr-001", Severity: "critical", Description: "no direct DB access"},
 			},
 		},
-	}, consent.NewManager(false, dir, nil), audit.NewLog(), nil)
+	}, consent.NewManager(false, dir, nil, io.Discard), audit.NewLog(), nil)
 
 	got, err := r.ExecuteTool(c.ToolGetArchitectureRules, nil, 10)
 	if err != nil {
@@ -305,7 +306,7 @@ func TestClassDepsResolvesLayerFromNamespace(t *testing.T) {
 		Layers: []config.LayerConfig{
 			{Name: "domain", Namespaces: []string{"src/domain"}},
 		},
-	}, consent.NewManager(false, dir, nil), audit.NewLog(), nil)
+	}, consent.NewManager(false, dir, nil, io.Discard), audit.NewLog(), nil)
 
 	_ = os.MkdirAll(filepath.Join(dir, "src/domain"), 0755)
 	_ = os.WriteFile(filepath.Join(dir, "src/domain/service.go"), []byte("package domain\n"), 0644)

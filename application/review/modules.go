@@ -27,10 +27,7 @@ func extractAnalyzedModules(entries []models.AuditEntry) []string {
 	return result
 }
 
-func skippedModules(incomplete bool, analyzed []string, sourceFiles []string) []string {
-	if !incomplete {
-		return nil
-	}
+func skippedModules(_ bool, analyzed []string, sourceFiles []string) []string {
 	analyzedSet := make(map[string]bool, len(analyzed))
 	for _, f := range analyzed {
 		analyzedSet[f] = true

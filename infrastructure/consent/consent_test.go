@@ -1,6 +1,7 @@
 package consent
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -85,6 +86,22 @@ func TestCheckAutoApprovesConfiguredExternalSystem(t *testing.T) {
 
 	if decision != c.DecisionAutoApproved {
 		t.Fatalf("expected %q, got %q", c.DecisionAutoApproved, decision)
+	}
+}
+
+func TestCheckBlockedAndDeniedWriteToOut(t *testing.T) {
+	var buf bytes.Buffer
+	m := &Manager{interactive: false, out: &buf}
+
+	m.Check(c.ToolReadFile, map[string]interface{}{c.ArgPath: ".env"}, 10)
+	if !strings.Contains(buf.String(), "BLOCKED") {
+		t.Errorf("expected BLOCKED message in out, got: %q", buf.String())
+	}
+
+	buf.Reset()
+	m.Check(c.ToolGetDocumentation, make(map[string]interface{}), 10)
+	if !strings.Contains(buf.String(), "DENIED") {
+		t.Errorf("expected DENIED message in out, got: %q", buf.String())
 	}
 }
 

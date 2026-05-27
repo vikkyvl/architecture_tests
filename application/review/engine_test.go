@@ -400,8 +400,8 @@ func TestRequestPaceWaitScalesWithProjectedTokens(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := requestPaceWait(tt.tokens); got != tt.want {
-				t.Fatalf("requestPaceWait(%d) = %s, want %s", tt.tokens, got, tt.want)
+			if got := requestPaceWait(tt.tokens, "fake"); got != tt.want {
+				t.Fatalf("requestPaceWait(%d, fake) = %s, want %s", tt.tokens, got, tt.want)
 			}
 		})
 	}

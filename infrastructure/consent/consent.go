@@ -2,13 +2,12 @@ package consent
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	c "github.com/archguard/project/shared/constants"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -48,6 +47,7 @@ type Manager struct {
 	projectPath    string
 	interactive    bool
 	allowedSystems map[string]bool
+	out            io.Writer
 }
 
 type Rule struct {
@@ -55,15 +55,12 @@ type Rule struct {
 	Pattern string `yaml:"pattern"`
 }
 
-type consentFile struct {
-	Allowed []Rule `yaml:"allowed"`
-}
-
-func NewManager(interactive bool, projectPath string, allowedSystems map[string]bool) *Manager {
+func NewManager(interactive bool, projectPath string, allowedSystems map[string]bool, out io.Writer) *Manager {
 	m := &Manager{
 		interactive:    interactive,
 		projectPath:    projectPath,
 		allowedSystems: allowedSystems,
+		out:            out,
 	}
 	m.projectAllowed = loadRules(filepath.Join(projectPath, projectConsentPath))
 	if home, err := os.UserHomeDir(); err == nil {
@@ -72,9 +69,16 @@ func NewManager(interactive bool, projectPath string, allowedSystems map[string]
 	return m
 }
 
+func (m *Manager) writer() io.Writer {
+	if m.out != nil {
+		return m.out
+	}
+	return os.Stderr
+}
+
 func (m *Manager) Check(toolName string, args map[string]interface{}, budget int) Decision {
 	if blocked, value := m.isBlockedCall(toolName, args); blocked {
-		fmt.Fprint(os.Stderr, renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgBlockedTool, toolName, value))))
+		fmt.Fprint(m.writer(), renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgBlockedTool, toolName, value))))
 		return c.DecisionBlocked
 	}
 
@@ -99,7 +103,7 @@ func (m *Manager) Check(toolName string, args map[string]interface{}, budget int
 	}
 
 	if !m.interactive {
-		fmt.Fprint(os.Stderr, renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgNonInteractiveDeny, toolName))))
+		fmt.Fprint(m.writer(), renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgNonInteractiveDeny, toolName))))
 		return c.DecisionUserDenied
 	}
 
@@ -122,8 +126,8 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 	}
 	rows = append(rows, renderConsentKV(msgConsentBudget, fmt.Sprintf(msgCallsRemaining, budget)))
 
-	fmt.Fprintln(os.Stderr)
-	choice := runConsentMenu(rows)
+	fmt.Fprintln(m.writer())
+	choice := runConsentMenu(rows, m.writer())
 
 	switch choice {
 	case choiceAllowForSession:
@@ -142,7 +146,7 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 		}
 		m.projectAllowed = append(m.projectAllowed, rule)
 		if err := saveRules(filepath.Join(m.projectPath, projectConsentPath), m.projectAllowed); err != nil {
-			fmt.Fprintf(os.Stderr, msgConsentSaveFailed, err)
+			fmt.Fprintf(m.writer(), msgConsentSaveFailed, err)
 		}
 		return c.DecisionProjectAllow
 	case choiceDeny:
@@ -161,8 +165,8 @@ func (m *Manager) confirmDefaultPattern(toolName string, args map[string]interfa
 		"",
 		consentHelpStyle.Render(patternMenuFooterHint),
 	}
-	fmt.Fprintln(os.Stderr)
-	return runPatternConfirmMenu(rows) == choicePatternYes
+	fmt.Fprintln(m.writer())
+	return runPatternConfirmMenu(rows, m.writer()) == choicePatternYes
 }
 
 func (m *Manager) isBlockedCall(toolName string, args map[string]interface{}) (bool, string) {
@@ -181,91 +185,4 @@ func (m *Manager) isBlockedCall(toolName string, args map[string]interface{}) (b
 	}
 
 	return false, ""
-}
-
-func isPathBlocked(path string) bool {
-	clean := filepath.Clean(path)
-	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
-		return true
-	}
-	return c.IsSensitivePath(path)
-}
-
-func allowedBy(rules []Rule, toolName string, args map[string]interface{}) bool {
-	for _, rule := range rules {
-		if rule.Tool == toolName && patternMatches(rule.Pattern, toolName, args) {
-			return true
-		}
-	}
-	return false
-}
-
-func patternMatches(pattern, toolName string, args map[string]interface{}) bool {
-	if pattern == "" || pattern == patternAll {
-		return true
-	}
-	if toolName == c.ToolReadFile && strings.HasPrefix(pattern, patternGlobPrefix) {
-		path, _ := args[c.ArgPath].(string)
-		return globMatches(strings.TrimPrefix(pattern, patternGlobPrefix), filepath.ToSlash(path))
-	}
-	if toolName == c.ToolGetExternalContext && strings.HasPrefix(pattern, patternSystemPrefix) {
-		return externalSystem(args) == strings.TrimPrefix(pattern, patternSystemPrefix)
-	}
-	return pattern == defaultPattern(toolName, args)
-}
-
-func globMatches(pattern, path string) bool {
-	pattern = filepath.ToSlash(pattern)
-	if strings.HasSuffix(pattern, recursiveGlobSuffix) {
-		prefix := strings.TrimSuffix(pattern, recursiveGlobSuffix)
-		return path == prefix || strings.HasPrefix(path, prefix+"/")
-	}
-	ok, err := filepath.Match(pattern, path)
-	return err == nil && ok
-}
-
-func defaultPattern(toolName string, args map[string]interface{}) string {
-	switch toolName {
-	case c.ToolReadFile:
-		path, _ := args[c.ArgPath].(string)
-		return patternGlobPrefix + filepath.ToSlash(path)
-	case c.ToolGetExternalContext:
-		return patternSystemPrefix + externalSystem(args)
-	default:
-		return patternAll
-	}
-}
-
-func externalSystem(args map[string]interface{}) string {
-	system, _ := args[c.ArgSystem].(string)
-	system = strings.ToLower(strings.TrimSpace(system))
-	if system == "" {
-		return defaultExternalSystem
-	}
-	return system
-}
-
-func loadRules(path string) []Rule {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var file consentFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return nil
-	}
-	return file.Allowed
-}
-
-func saveRules(path string, rules []Rule) error {
-	if err := os.MkdirAll(filepath.Dir(path), consentDirPermission); err != nil {
-		return err
-	}
-	data, err := yaml.Marshal(consentFile{
-		Allowed: rules,
-	})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, consentFilePermission)
 }

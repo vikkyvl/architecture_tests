@@ -35,6 +35,13 @@ func TestRenderReportPathsUsesClickableFileLinks(t *testing.T) {
 	assertFileLink(t, out, testMarkdownReportPath)
 }
 
+func TestRenderReportPathsHyphenatedNamesAreClickable(t *testing.T) {
+	out := RenderReportPaths("report-test.json", "report-test.md")
+
+	assertFileLink(t, out, "report-test.json")
+	assertFileLink(t, out, "report-test.md")
+}
+
 func TestRenderRateLimitWaitUsesUIBadge(t *testing.T) {
 	out := renderRateLimitWait(15 * time.Second)
 
@@ -109,7 +116,9 @@ func assertFileLink(t *testing.T, out, path string) {
 	t.Helper()
 
 	uri := testFileURI(t, path)
-	want := fmt.Sprintf(testFileLinkFormat, uri, styledFileLinkText(path))
+	// New format: ANSI styling wraps the OSC 8 sequence, plain text inside.
+	osc8 := fmt.Sprintf(testFileLinkFormat, uri, path)
+	want := fmt.Sprintf(formatStyledLink, osc8)
 	if !strings.Contains(out, want) {
 		t.Fatalf(testClickableLinkFormat, path)
 	}

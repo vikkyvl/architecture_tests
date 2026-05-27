@@ -15,14 +15,31 @@ const (
 	AnthropicTimeout    = 120 * time.Second
 	AnthropicMaxRetries = 5
 	AnthropicRetryWait  = 20 * time.Second
+
+	// Tier-1 Build: 50 RPM, 200 K TPM (claude-opus-4+).
+	// TPM is used as the context-pruning soft-limit denominator; RPM drives the
+	// minimum inter-request interval so we never burst past the quota ceiling.
+	AnthropicRPM             = 50
+	AnthropicMinInterval     = 1200 * time.Millisecond // 60 s / 50 RPM
+	AnthropicInputTPM        = 40000
+	AnthropicMaxOutputTokens = 8192
 )
 
 const (
 	GeminiBaseURL    = "https://generativelanguage.googleapis.com/v1beta/models"
 	GeminiModel      = "gemini-2.5-flash"
-	GeminiTimeout    = 120 * time.Second
+	GeminiTimeout    = 180 * time.Second // Flash thinking can be slow
 	GeminiMaxRetries = 5
-	GeminiRetryWait  = 15 * time.Second
+	GeminiRetryWait  = 30 * time.Second // Gemini quota resets are typically 60 s windows
+
+	// Free tier: 15 RPM, 1 M TPM.  Paid: 2 000 RPM, 4 M TPM.
+	// We use the free-tier RPM as a conservative floor so the app works out-of-the-box
+	// on any key.  Gemini does not expose remaining-quota response headers, so the
+	// RPM-based interval is the only proactive pacing signal we have.
+	GeminiRPM             = 15
+	GeminiMinInterval     = 4 * time.Second // 60 s / 15 RPM
+	GeminiInputTPM        = 250000          // paid tier; avoids over-pruning large contexts
+	GeminiMaxOutputTokens = 8192
 )
 
 const (
@@ -31,16 +48,16 @@ const (
 	OpenAITimeout    = 120 * time.Second
 	OpenAIMaxRetries = 5
 	OpenAIRetryWait  = 15 * time.Second
+
+	// Tier-1: 500 RPM, 200 K TPM (gpt-4o).
+	OpenAIRPM             = 500
+	OpenAIMinInterval     = 120 * time.Millisecond // 60 s / 500 RPM
+	OpenAIInputTPM        = 150000
+	OpenAIMaxOutputTokens = 4096
 )
 
 const (
 	CacheControlEphemeral = "ephemeral"
-)
-
-const (
-	AnthropicInputTPM = 30000
-	GeminiInputTPM    = 60000
-	OpenAIInputTPM    = 30000
 )
 
 const (

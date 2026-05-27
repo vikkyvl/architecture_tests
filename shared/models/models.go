@@ -48,6 +48,24 @@ type Metrics struct {
 	PreemptiveSleeps int            `json:"preemptive_sleeps,omitempty"`
 }
 
+type LayerEstimate struct {
+	Name      string `json:"name"`
+	FileCount int    `json:"file_count"`
+	ToolCalls int    `json:"tool_calls"`
+}
+
+type EstimateResult struct {
+	ProjectName           string          `json:"project_name"`
+	Language              string          `json:"language"`
+	TotalFiles            int             `json:"total_files"`
+	FilesByLayer          []LayerEstimate `json:"files_by_layer"`
+	UnknownFiles          int             `json:"unknown_files"`
+	EstimatedToolCalls    int             `json:"estimated_tool_calls"`
+	MaxToolCalls          int             `json:"max_tool_calls"`
+	RunsNeeded            int             `json:"runs_needed"`
+	SuggestedMaxToolCalls int             `json:"suggested_max_tool_calls"`
+}
+
 type AuditEntry struct {
 	Timestamp             time.Time `json:"timestamp"`
 	ToolName              string    `json:"tool_name"`

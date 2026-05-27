@@ -3,8 +3,6 @@ package contextresolver
 import (
 	"fmt"
 	"strings"
-
-	"github.com/archguard/project/config"
 )
 
 const (
@@ -31,30 +29,6 @@ const (
 	systemPromptGuidelines     = "\nGuidelines:\n- Check every source file.\n- Report exact file paths and line numbers.\n- Call report_violation immediately per violation.\n- Provide fix suggestions.\n- When done, stop and summarize.\n"
 	pathJoinSeparator          = ", "
 )
-
-type Resolver struct {
-	project   config.ProjectConfig
-	layers    []config.LayerConfig
-	rules     []config.RuleConfig
-	domainCtx config.DomainContextConfig
-	external  []config.ExternalConfig
-}
-
-func NewResolver(
-	project config.ProjectConfig,
-	layers []config.LayerConfig,
-	rules []config.RuleConfig,
-	domainCtx config.DomainContextConfig,
-	external []config.ExternalConfig,
-) *Resolver {
-	return &Resolver{
-		project:   project,
-		layers:    layers,
-		rules:     rules,
-		domainCtx: domainCtx,
-		external:  external,
-	}
-}
 
 func (r *Resolver) BuildSystemPrompt() string {
 	var sb strings.Builder

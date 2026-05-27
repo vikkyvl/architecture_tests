@@ -3,6 +3,7 @@ package consent
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -122,27 +123,27 @@ var patternConfirmOptions = []consentOption{
 	},
 }
 
-func runConsentMenu(rows []string) string {
-	return runMenu(rows, mainConsentOptions, choiceDeny, mainMenuHelpHint)
+func runConsentMenu(rows []string, out io.Writer) string {
+	return runMenu(rows, mainConsentOptions, choiceDeny, mainMenuHelpHint, out)
 }
 
-func runPatternConfirmMenu(rows []string) string {
-	return runMenu(rows, patternConfirmOptions, choicePatternNo, patternMenuHelpHint)
+func runPatternConfirmMenu(rows []string, out io.Writer) string {
+	return runMenu(rows, patternConfirmOptions, choicePatternNo, patternMenuHelpHint, out)
 }
 
-func runMenu(rows []string, options []consentOption, cancelKey, helpHint string) string {
+func runMenu(rows []string, options []consentOption, cancelKey, helpHint string, out io.Writer) string {
 	model := consentChoiceModel{
 		rows:      rows,
 		options:   options,
 		cancelKey: cancelKey,
 		helpHint:  helpHint,
 	}
-	program := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr))
-	out, err := program.Run()
+	program := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(out))
+	result, err := program.Run()
 	if err != nil {
-		return fallbackMenuChoice(rows, options, cancelKey)
+		return fallbackMenuChoice(rows, options, cancelKey, out)
 	}
-	final, ok := out.(consentChoiceModel)
+	final, ok := result.(consentChoiceModel)
 	if !ok || final.choice == "" {
 		return options[0].key
 	}
@@ -207,13 +208,13 @@ func (m consentChoiceModel) View() string {
 	return consentPanelStyle.Render(strings.Join(lines, consentLineBreak)) + consentLineBreak
 }
 
-func fallbackMenuChoice(rows []string, options []consentOption, defaultKey string) string {
-	fmt.Fprintln(os.Stderr, consentPanelStyle.Render(strings.Join(rows, consentLineBreak)))
+func fallbackMenuChoice(rows []string, options []consentOption, defaultKey string, out io.Writer) string {
+	fmt.Fprintln(out, consentPanelStyle.Render(strings.Join(rows, consentLineBreak)))
 	var keys []string
 	for _, opt := range options {
 		keys = append(keys, fmt.Sprintf(consentFormatChoice, opt.key, opt.label))
 	}
-	fmt.Fprint(os.Stderr, consentChoiceStyle.Render(strings.Join(keys, consentOptionGap)+consentPromptSuffix))
+	fmt.Fprint(out, consentChoiceStyle.Render(strings.Join(keys, consentOptionGap)+consentPromptSuffix))
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
 	choice := strings.TrimSpace(strings.ToLower(input))

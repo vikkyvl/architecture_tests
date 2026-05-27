@@ -38,17 +38,11 @@ const (
 	markdownModuleHeader      = "\n## %s\n\n"
 	markdownModuleLine        = "- `%s`\n"
 	markdownAnalyzedModules   = "Analyzed Modules"
-	markdownSkippedModules    = "Skipped Modules (limit reached)"
+	markdownSkippedModules    = "Unread Files"
 	dedupKeyFormat            = "%s:%d:%s"
 	operationResult           = "result"
 	errMarshalResult          = "failed to marshal result"
 )
-
-type Reviewer struct{}
-
-func NewReviewer() *Reviewer {
-	return new(Reviewer)
-}
 
 func (r *Reviewer) Process(res *models.AnalysisResult) {
 	res.Violations = r.dedup(res.Violations)
@@ -206,12 +200,22 @@ func writeModuleList(sb *strings.Builder, title string, modules []string) {
 	}
 }
 
+func isEventEntry(name string) bool {
+	return name == c.EventLLMTurn || name == c.EventRateLimit || name == c.EventPreemptiveSleep
+}
+
 func (r *Reviewer) writeAuditLog(sb *strings.Builder, entries []models.AuditEntry) {
-	if len(entries) == 0 {
+	var toolEntries []models.AuditEntry
+	for _, e := range entries {
+		if !isEventEntry(e.ToolName) {
+			toolEntries = append(toolEntries, e)
+		}
+	}
+	if len(toolEntries) == 0 {
 		return
 	}
 	sb.WriteString(markdownAuditTable)
-	for i, e := range entries {
+	for i, e := range toolEntries {
 		sb.WriteString(fmt.Sprintf(markdownAuditRow, i+1, e.ToolName, e.Decision, e.ResultSize, e.Error))
 	}
 }

@@ -19,6 +19,7 @@ type ReviewOptions struct {
 	MaxToolCalls int
 	Timeout      time.Duration
 	Interactive  bool
+	ResumePath   string
 }
 
 func RunReview(opts ReviewOptions) error {
@@ -40,6 +41,7 @@ func RunReview(opts ReviewOptions) error {
 		MaxToolCalls: opts.MaxToolCalls,
 		Timeout:      opts.Timeout,
 		Interactive:  opts.Interactive,
+		ResumePath:   opts.ResumePath,
 	}, out, obs)
 	if err != nil {
 		return err

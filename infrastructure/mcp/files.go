@@ -89,6 +89,9 @@ func (r *Resolver) readFile(relPath string) (string, bool, error) {
 		return "", false, err
 	}
 
+	if r.previouslyAnalyzed[clean] {
+		return fmt.Sprintf(readFilePrevRunStubFmt, relPath), true, nil
+	}
 	if stub, ok := r.checkReadFileDedup(clean, relPath); ok {
 		return stub, true, nil
 	}

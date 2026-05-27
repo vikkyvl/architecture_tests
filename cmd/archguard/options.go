@@ -34,4 +34,9 @@ const (
 	timeoutFlagDesc         = "Analysis timeout"
 	interactiveFlagName     = "interactive"
 	interactiveFlagDesc     = "Prompt for consent-required tool calls"
+	resumeFlagName          = "resume"
+	resumeFlagDesc          = "Path to a previous report.json to continue analysis from (skips already-analyzed files)"
+
+	estimateCommandUse   = "estimate"
+	estimateCommandShort = "Estimate tool-call budget and number of runs required for a project"
 )

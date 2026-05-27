@@ -32,16 +32,18 @@ const (
 )
 
 const (
-	HTTPStatusOverloaded = 529
+	HTTPStatusOverloaded  = 529
+	HTTPStatusUnavailable = 503
 )
 
 const (
-	EventLLMTurn            = "<llm_turn>"
-	EventRateLimit          = "<rate_limit>"
-	EventPreemptiveSleep    = "<preemptive_sleep>"
-	RateLimitKind429        = "rate_limited"
-	RateLimitKindOverloaded = "overloaded"
-	RateLimitKindPreemptive = "preemptive"
+	EventLLMTurn             = "<llm_turn>"
+	EventRateLimit           = "<rate_limit>"
+	EventPreemptiveSleep     = "<preemptive_sleep>"
+	RateLimitKind429         = "rate_limited"
+	RateLimitKindOverloaded  = "overloaded"
+	RateLimitKindUnavailable = "unavailable"
+	RateLimitKindPreemptive  = "preemptive"
 )
 
 const (

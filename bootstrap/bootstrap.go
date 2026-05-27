@@ -24,6 +24,7 @@ const (
 	headerAnalyzer          = "ArchGuard Analyzer"
 	headerReports           = "Reports"
 	headerResults           = "Results"
+	contextSeparator        = "\n\n"
 )
 
 type ContextBuilder interface {
@@ -48,20 +49,23 @@ type Options struct {
 	MaxToolCalls int
 	Timeout      time.Duration
 	Interactive  bool
+	ResumePath   string // path to a previous report.json to continue from
 }
 
 type App struct {
-	out         *output.OutputTransport
-	opts        Options
-	cfg         *config.Config
-	provider    llm.Provider
-	mcpResolver review.ToolRunner
-	ctxResolver ContextBuilder
-	reviewer    ResultProcessor
-	auditLog    *audit.Log
-	closers     []func()
-	engine      *review.Engine
-	startTime   time.Time
+	out                 *output.OutputTransport
+	opts                Options
+	cfg                 *config.Config
+	provider            llm.Provider
+	mcpResolver         review.ToolRunner
+	ctxResolver         ContextBuilder
+	reviewer            ResultProcessor
+	auditLog            *audit.Log
+	closers             []func()
+	engine              *review.Engine
+	startTime           time.Time
+	resumeContext       string
+	prevAnalyzedModules []string
 }
 
 func NewApp(opts Options, out *output.OutputTransport, obs review.Observer) (*App, error) {
@@ -86,21 +90,39 @@ func NewApp(opts Options, out *output.OutputTransport, obs review.Observer) (*Ap
 		closers = append(closers, cl.Close)
 	}
 
-	consentMgr := consent.NewManager(opts.Interactive, opts.ProjectPath, allowedSystems)
+	var resumeCtx string
+	var prevViolations []models.Violation
+	var prevAnalyzed []string
+	if opts.ResumePath != "" {
+		prev, err := loadResumeReport(opts.ResumePath)
+		if err != nil {
+			for _, cl := range closers {
+				cl()
+			}
+			return nil, err
+		}
+		resumeCtx = buildResumeContext(prev)
+		prevViolations = prev.Violations
+		prevAnalyzed = prev.AnalyzedModules
+	}
+
+	consentMgr := consent.NewManager(opts.Interactive, opts.ProjectPath, allowedSystems, out.Progress)
 	auditLog := audit.NewLog()
 
 	var mcpResolver review.ToolRunner = mcp.NewResolver(
 		mcp.ResolverConfig{
-			ProjectPath:     opts.ProjectPath,
-			DocsPath:        opts.DocsPath,
-			Extensions:      exts,
-			MaxFileBytes:    cfg.Runtime.MaxFileBytes,
-			SrcRoot:         cfg.Project.SrcRoot,
-			Language:        cfg.Project.Language,
-			Layers:          cfg.Layers,
-			Rules:           cfg.Rules,
-			DomainContext:   cfg.DomainContext,
-			KeepWindowTurns: cfg.Runtime.KeepRecentTurns,
+			ProjectPath:        opts.ProjectPath,
+			DocsPath:           opts.DocsPath,
+			Extensions:         exts,
+			MaxFileBytes:       cfg.Runtime.MaxFileBytes,
+			SrcRoot:            cfg.Project.SrcRoot,
+			Language:           cfg.Project.Language,
+			Layers:             cfg.Layers,
+			Rules:              cfg.Rules,
+			DomainContext:      cfg.DomainContext,
+			KeepWindowTurns:    cfg.Runtime.KeepRecentTurns,
+			InitialViolations:  prevViolations,
+			PreviouslyAnalyzed: prevAnalyzed,
 		},
 		consentMgr, auditLog, externals,
 	)
@@ -148,17 +170,19 @@ func NewApp(opts Options, out *output.OutputTransport, obs review.Observer) (*Ap
 	engine := review.NewEngine(provider, mcpResolver, auditLog, obs)
 
 	return &App{
-		out:         out,
-		opts:        opts,
-		cfg:         cfg,
-		provider:    provider,
-		mcpResolver: mcpResolver,
-		ctxResolver: ctxResolver,
-		reviewer:    reviewer,
-		auditLog:    auditLog,
-		closers:     closers,
-		engine:      engine,
-		startTime:   startTime,
+		out:                 out,
+		opts:                opts,
+		cfg:                 cfg,
+		provider:            provider,
+		mcpResolver:         mcpResolver,
+		ctxResolver:         ctxResolver,
+		reviewer:            reviewer,
+		auditLog:            auditLog,
+		closers:             closers,
+		engine:              engine,
+		startTime:           startTime,
+		resumeContext:       resumeCtx,
+		prevAnalyzedModules: prevAnalyzed,
 	}, nil
 }
 
@@ -171,16 +195,28 @@ func (a *App) Close() {
 func (a *App) Run() error {
 	systemPrompt := a.ctxResolver.BuildSystemPrompt()
 
-	run, err := a.engine.Run(review.Options{
+	initialCtx := promptExternalContext(a.cfg.External, a.cfg, a.mcpResolver, a.opts.Interactive, a.out)
+	if a.resumeContext != "" {
+		if initialCtx != "" {
+			initialCtx += contextSeparator + a.resumeContext
+		} else {
+			initialCtx = a.resumeContext
+		}
+	}
+
+	run, runErr := a.engine.Run(review.Options{
 		SystemPrompt:    systemPrompt,
-		InitialContext:  promptExternalContext(a.cfg.External, a.cfg, a.mcpResolver, a.opts.Interactive, a.out),
+		InitialContext:  initialCtx,
 		MaxToolCalls:    a.opts.MaxToolCalls,
 		Timeout:         a.opts.Timeout,
 		PruneAfterTurns: a.cfg.Runtime.PruneAfterTurns,
 		KeepRecentTurns: a.cfg.Runtime.KeepRecentTurns,
 	})
-	if err != nil {
-		return fmt.Errorf(errLLMRequest, err)
+	if runErr != nil {
+		if run == nil {
+			return fmt.Errorf(errLLMRequest, runErr)
+		}
+		a.out.WriteProgress(output.RenderError(fmt.Errorf(errLLMRequest, runErr)))
 	}
 
 	duration := time.Since(a.startTime)
@@ -188,6 +224,13 @@ func (a *App) Run() error {
 	if err != nil {
 		a.out.WriteProgress(output.RenderNotice(output.WarnBadgeStyle.Render(output.BadgeSkip), fmt.Sprintf("could not count files: %v", err)))
 	}
+
+	allAnalyzed := mergeAnalyzedModules(a.prevAnalyzedModules, run.AnalyzedModules)
+	var allSkipped []string
+	if run.Incomplete {
+		allSkipped = diffSkippedModules(allAnalyzed, a.mcpResolver.ListSourceFiles())
+	}
+
 	ar := &models.AnalysisResult{
 		ProjectName:     a.cfg.Project.Name,
 		Language:        a.cfg.Project.Language,
@@ -200,8 +243,8 @@ func (a *App) Run() error {
 		Violations:      run.Violations,
 		AuditLog:        run.AuditEntries,
 		Incomplete:      run.Incomplete,
-		AnalyzedModules: run.AnalyzedModules,
-		SkippedModules:  run.SkippedModules,
+		AnalyzedModules: allAnalyzed,
+		SkippedModules:  allSkipped,
 	}
 
 	a.reviewer.Process(ar)

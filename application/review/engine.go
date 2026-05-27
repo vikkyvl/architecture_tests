@@ -37,94 +37,6 @@ var defaultRetryWaits = []time.Duration{
 	10 * time.Second,
 }
 
-type ToolRunner interface {
-	ListTools() []models.ToolDefinition
-	ExecuteTool(name string, args map[string]interface{}, budget int) (string, error)
-	GetViolations() []models.Violation
-	ListSourceFiles() []string
-}
-
-type AuditReader interface {
-	Entries() []models.AuditEntry
-}
-
-type LLMTurnRecorder interface {
-	RecordLLMTurn(input, cached, cacheWrite, pruned int)
-}
-
-type Observer interface {
-	LimitReached(message string)
-	Retry(provider string, attempt, maxAttempts int, wait time.Duration, err error)
-	LLMText(text string)
-	ToolResult(callNumber int, toolName string, resultSize int, err error)
-	AnalysisComplete()
-}
-
-type Options struct {
-	SystemPrompt    string
-	InitialContext  string
-	MaxToolCalls    int
-	Timeout         time.Duration
-	MaxRetries      int
-	RetryWaits      []time.Duration
-	TextPreviewSize int
-	PruneAfterTurns int
-	KeepRecentTurns int
-}
-
-type Engine struct {
-	provider llm.Provider
-	tools    ToolRunner
-	audit    AuditReader
-	recorder LLMTurnRecorder
-	observer Observer
-}
-
-type RunResult struct {
-	ToolCalls       int
-	Incomplete      bool
-	Violations      []models.Violation
-	AuditEntries    []models.AuditEntry
-	AnalyzedModules []string
-	SkippedModules  []string
-}
-
-type noopObserver struct{}
-
-func (noopObserver) LimitReached(string) {
-	return
-}
-
-func (noopObserver) Retry(string, int, int, time.Duration, error) {
-	return
-}
-
-func (noopObserver) LLMText(string) {
-	return
-}
-
-func (noopObserver) ToolResult(int, string, int, error) {
-	return
-}
-
-func (noopObserver) AnalysisComplete() {
-	return
-}
-
-func NewEngine(provider llm.Provider, tools ToolRunner, audit AuditReader, observer Observer) *Engine {
-	if observer == nil {
-		observer = new(noopObserver)
-	}
-	recorder, _ := audit.(LLMTurnRecorder)
-	return &Engine{
-		provider: provider,
-		tools:    tools,
-		audit:    audit,
-		recorder: recorder,
-		observer: observer,
-	}
-}
-
 func (e *Engine) Run(opts Options) (*RunResult, error) {
 	if opts.MaxRetries == 0 {
 		opts.MaxRetries = defaultMaxRetries
@@ -181,11 +93,11 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 		pruned := prunePressureAware(messages, projected, softLimit, opts.KeepRecentTurns)
 
 		req := llm.Request{
-			System: systemBlocks, MaxTokens: c.AnalyzerMaxTokens,
+			System: systemBlocks, MaxTokens: providerMaxOutputTokens(e.provider.Name()),
 			Messages: messages, Tools: apiTools,
 		}
 		if turn > 0 {
-			wait := requestPaceWait(estimateRequestTokens(req))
+			wait := requestPaceWait(estimateRequestTokens(req), e.provider.Name())
 			if time.Now().Add(wait).After(deadline) {
 				e.observer.LimitReached(c.LimitReasonTimeout)
 				incomplete = true
@@ -196,7 +108,16 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 		resp, err := e.sendMessageWithRetry(req, opts.MaxRetries, opts.RetryWaits)
 		turn++
 		if err != nil {
-			return nil, err
+			auditEntries := e.audit.Entries()
+			analyzedModules := extractAnalyzedModules(auditEntries)
+			return &RunResult{
+				ToolCalls:       toolCalls,
+				Incomplete:      true,
+				Violations:      e.tools.GetViolations(),
+				AuditEntries:    auditEntries,
+				AnalyzedModules: analyzedModules,
+				SkippedModules:  skippedModules(true, analyzedModules, e.tools.ListSourceFiles()),
+			}, err
 		}
 		if e.recorder != nil {
 			e.recorder.RecordLLMTurn(resp.Usage.InputTokens, resp.Usage.CacheReadTokens, resp.Usage.CacheCreationTokens, pruned)
@@ -337,6 +258,32 @@ func providerSoftLimit(name string) int {
 	}
 }
 
+func providerMinInterval(name string) time.Duration {
+	switch name {
+	case c.ProviderAnthropic:
+		return c.AnthropicMinInterval
+	case c.ProviderGemini:
+		return c.GeminiMinInterval
+	case c.ProviderOpenAI:
+		return c.OpenAIMinInterval
+	default:
+		return smallRequestSpacing
+	}
+}
+
+func providerMaxOutputTokens(name string) int {
+	switch name {
+	case c.ProviderAnthropic:
+		return c.AnthropicMaxOutputTokens
+	case c.ProviderGemini:
+		return c.GeminiMaxOutputTokens
+	case c.ProviderOpenAI:
+		return c.OpenAIMaxOutputTokens
+	default:
+		return c.AnalyzerMaxTokens
+	}
+}
+
 func nonExternalTools(defs []models.ToolDefinition) []models.ToolDefinition {
 	tools := make([]models.ToolDefinition, 0, len(defs))
 	for _, d := range defs {
@@ -348,17 +295,22 @@ func nonExternalTools(defs []models.ToolDefinition) []models.ToolDefinition {
 	return tools
 }
 
-func requestPaceWait(projectedTokens int) time.Duration {
+func requestPaceWait(projectedTokens int, providerName string) time.Duration {
+	var d time.Duration
 	switch {
 	case projectedTokens >= veryLargeRequestTokens:
-		return veryLargeRequestSpacing
+		d = veryLargeRequestSpacing
 	case projectedTokens >= largeRequestTokens:
-		return largeRequestSpacing
+		d = largeRequestSpacing
 	case projectedTokens >= mediumRequestTokens:
-		return mediumRequestSpacing
+		d = mediumRequestSpacing
 	default:
-		return smallRequestSpacing
+		d = smallRequestSpacing
 	}
+	if min := providerMinInterval(providerName); d < min {
+		return min
+	}
+	return d
 }
 
 func estimateRequestTokens(req llm.Request) int {
