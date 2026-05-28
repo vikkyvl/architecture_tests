@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/archguard/project/bootstrap"
 	"github.com/archguard/project/delivery/output"
 )
+
+const exitCodeInterrupted = 130
 
 type ReviewOptions struct {
 	ProjectPath  string
@@ -47,5 +52,22 @@ func RunReview(opts ReviewOptions) error {
 		return err
 	}
 	defer app.Close()
-	return app.Run()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-sigCh:
+			signal.Stop(sigCh)
+			out.WriteProgress(output.RenderInterrupted() + "\n")
+			app.Close()
+			os.Exit(exitCodeInterrupted)
+		case <-done:
+		}
+	}()
+
+	err = app.Run()
+	close(done)
+	return err
 }

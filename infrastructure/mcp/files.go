@@ -54,14 +54,14 @@ func (r *Resolver) walkProjectFiles(fn func(rel string, info os.FileInfo)) {
 }
 
 func (r *Resolver) projectStructure() (string, error) {
-	var files []fileEntry
-	r.walkProjectFiles(func(rel string, info os.FileInfo) {
-		files = append(files, newFileEntry(rel, info))
+	var paths []string
+	r.walkProjectFiles(func(rel string, _ os.FileInfo) {
+		paths = append(paths, rel)
 	})
 	return marshalToolResult(toolResultProjectStructure, map[string]interface{}{
 		c.JSONKeyRoot:  r.projectPath,
-		c.JSONKeyFiles: files,
-		c.JSONKeyTotal: len(files),
+		c.JSONKeyFiles: paths,
+		c.JSONKeyTotal: len(paths),
 	})
 }
 

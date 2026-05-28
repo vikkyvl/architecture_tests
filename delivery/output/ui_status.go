@@ -8,6 +8,20 @@ import (
 	c "github.com/archguard/project/shared/constants"
 )
 
+const (
+	badgeInterrupted = "INTERRUPTED"
+	msgInterrupted   = "Session forcefully terminated — all subprocesses have been shut down."
+	msgInterruptHint = "Press Ctrl+C at any time to interrupt and exit cleanly."
+)
+
+func RenderInterrupted() string {
+	return fmt.Sprintf(formatNotice, WarnBadgeStyle.Render(badgeInterrupted), mutedStyle.Render(msgInterrupted))
+}
+
+func RenderInterruptHint() string {
+	return fmt.Sprintf(formatNotice, infoBadgeStyle.Render(badgeInfo), mutedStyle.Render(msgInterruptHint))
+}
+
 func RenderToolResult(index int, name string, size int, err error) string {
 	prefix := mutedStyle.Render(fmt.Sprintf(formatToolIndex, index))
 	if err != nil {

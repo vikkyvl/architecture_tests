@@ -24,6 +24,7 @@ const (
 	choiceDeny            = "d"
 	choicePatternYes      = "y"
 	choicePatternNo       = "n"
+	choiceInterrupt       = "ctrl+c"
 	recursiveGlobSuffix   = "/**"
 	emptyConsentLine      = ""
 	projectConsentPath    = ".archguard/consent.yaml"

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -147,6 +148,10 @@ func runMenu(rows []string, options []consentOption, cancelKey, helpHint string,
 	if !ok || final.choice == "" {
 		return options[0].key
 	}
+	if final.choice == choiceInterrupt {
+		syscall.Kill(os.Getpid(), syscall.SIGINT) //nolint:errcheck
+		return cancelKey
+	}
 	return final.choice
 }
 
@@ -159,7 +164,10 @@ func (m consentChoiceModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 		switch key {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
+			m.choice = choiceInterrupt
+			return m, tea.Quit
+		case "esc":
 			m.choice = m.cancelKey
 			return m, tea.Quit
 		case "up", "k", "left", "h":

@@ -3,6 +3,7 @@ package review
 import (
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/archguard/project/infrastructure/llm"
@@ -12,7 +13,7 @@ import (
 
 const (
 	defaultMaxRetries        = 3
-	initialUserPrompt        = "Analyze this project for architectural violations in small, targeted batches. First map modules and dependency boundaries, then request only the source files needed to validate likely rule violations. Avoid rereading files and keep tool usage focused."
+	initialUserPrompt        = "Analyze this project for architectural violations. You MUST call get_class_dependencies on EVERY source file returned by get_project_structure — exhaustive coverage is required, sampling is not acceptable. Work layer by layer. Only stop when every single file has been processed."
 	contextSeparator         = "\n\n"
 	retryableOverloaded      = "overloaded"
 	retryableTempUnavailable = "temporarily unavailable"
@@ -141,27 +142,7 @@ func (e *Engine) Run(opts Options) (*RunResult, error) {
 			continue
 		}
 
-		results := make([]llm.ContentBlock, 0)
-		for _, b := range resp.Content {
-			if b.Type != c.ContentTypeToolUse {
-				continue
-			}
-			toolCalls++
-			remaining := opts.MaxToolCalls - toolCalls
-			args := decodeToolArgs(b)
-			res, execErr := e.tools.ExecuteTool(b.Name, args, remaining)
-			if execErr != nil {
-				e.observer.ToolResult(toolCalls, b.Name, 0, execErr)
-				content := execErr.Error()
-				if res != "" {
-					content = res
-				}
-				results = append(results, llm.NewToolResult(b.ID, content, true))
-				continue
-			}
-			e.observer.ToolResult(toolCalls, b.Name, len(res), nil)
-			results = append(results, llm.NewToolResult(b.ID, res, false))
-		}
+		results := dispatchTools(resp.Content, &toolCalls, opts.MaxToolCalls, e.tools, e.observer)
 		messages = append(messages, llm.Message{
 			Role:    c.RoleUser,
 			Content: results,
@@ -311,6 +292,63 @@ func requestPaceWait(projectedTokens int, providerName string) time.Duration {
 		return min
 	}
 	return d
+}
+
+type toolExecResult struct {
+	idx     int
+	id      string
+	name    string
+	res     string
+	execErr error
+}
+
+func dispatchTools(content []llm.ContentBlock, toolCalls *int, maxToolCalls int, tools ToolRunner, obs Observer) []llm.ContentBlock {
+	var calls []llm.ContentBlock
+	for _, b := range content {
+		if b.Type == c.ContentTypeToolUse {
+			calls = append(calls, b)
+		}
+	}
+	if len(calls) == 0 {
+		return nil
+	}
+
+	*toolCalls += len(calls)
+	remaining := maxToolCalls - *toolCalls
+
+	execResults := make([]toolExecResult, len(calls))
+	var wg sync.WaitGroup
+	wg.Add(len(calls))
+	for i, b := range calls {
+		go func(idx int, b llm.ContentBlock) {
+			defer wg.Done()
+			args := decodeToolArgs(b)
+			res, execErr := tools.ExecuteTool(b.Name, args, remaining)
+			execResults[idx] = toolExecResult{
+				idx: idx, id: b.ID, name: b.Name,
+				res: res, execErr: execErr,
+			}
+		}(i, b)
+	}
+	wg.Wait()
+
+	base := *toolCalls - len(calls) + 1
+	results := make([]llm.ContentBlock, 0, len(calls))
+	for _, r := range execResults {
+		callNum := base + r.idx
+		if r.execErr != nil {
+			obs.ToolResult(callNum, r.name, 0, r.execErr)
+			content := r.execErr.Error()
+			if r.res != "" {
+				content = r.res
+			}
+			results = append(results, llm.NewToolResult(r.id, content, true))
+		} else {
+			obs.ToolResult(callNum, r.name, len(r.res), nil)
+			results = append(results, llm.NewToolResult(r.id, r.res, false))
+		}
+	}
+	return results
 }
 
 func estimateRequestTokens(req llm.Request) int {

@@ -50,9 +50,13 @@ const (
 	OpenAIRetryWait  = 15 * time.Second
 
 	// Tier-1: 500 RPM, 200 K TPM (gpt-4o).
+	// InputTPM is intentionally set to 30 K (not the full 200 K quota) so that
+	// the 2/3 soft-limit (~20 K) triggers context pruning at a reasonable size.
+	// Without this cap, gpt-4o accumulates 100 K+ contexts that cost full price
+	// on every turn (no automatic caching below the 1 K prefix threshold).
 	OpenAIRPM             = 500
 	OpenAIMinInterval     = 120 * time.Millisecond // 60 s / 500 RPM
-	OpenAIInputTPM        = 150000
+	OpenAIInputTPM        = 30000
 	OpenAIMaxOutputTokens = 4096
 )
 

@@ -165,6 +165,7 @@ func NewApp(opts Options, out *output.OutputTransport, obs review.Observer) (*Ap
 		opts.MaxToolCalls,
 		opts.Timeout.String(),
 	))
+	out.WriteProgress(output.RenderInterruptHint())
 	out.WriteProgressBlank()
 
 	engine := review.NewEngine(provider, mcpResolver, auditLog, obs)
@@ -226,10 +227,7 @@ func (a *App) Run() error {
 	}
 
 	allAnalyzed := mergeAnalyzedModules(a.prevAnalyzedModules, run.AnalyzedModules)
-	var allSkipped []string
-	if run.Incomplete {
-		allSkipped = diffSkippedModules(allAnalyzed, a.mcpResolver.ListSourceFiles())
-	}
+	allSkipped := diffSkippedModules(allAnalyzed, a.mcpResolver.ListSourceFiles())
 
 	ar := &models.AnalysisResult{
 		ProjectName:     a.cfg.Project.Name,
@@ -258,6 +256,16 @@ func (a *App) Run() error {
 
 	a.out.WriteProgress(output.RenderHeader(headerReports))
 	a.out.WriteProgress(output.RenderReportPaths(a.opts.OutputJSON, a.opts.OutputMD))
+
+	if run != nil && run.Incomplete {
+		a.out.WriteProgress(output.RenderResumeHint(output.RunPlanOpts{
+			ProjectPath: a.opts.ProjectPath,
+			RulesPath:   a.opts.RulesPath,
+			OutputJSON:  a.opts.OutputJSON,
+			Provider:    a.opts.Provider,
+			Model:       a.opts.Model,
+		}, a.opts.MaxToolCalls))
+	}
 
 	a.out.WriteResult(output.RenderHeader(headerResults))
 	a.out.WriteResult(output.RenderResults(ar))

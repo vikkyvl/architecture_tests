@@ -361,7 +361,7 @@ func TestEngineUsesAnalyzerMaxTokens(t *testing.T) {
 	}
 }
 
-func TestEngineInitialPromptEncouragesTargetedBatches(t *testing.T) {
+func TestEngineInitialPromptRequiresExhaustiveCoverage(t *testing.T) {
 	provider := &fakeProvider{
 		responses: []*llm.Response{
 			{StopReason: c.StopReasonEndTurn},
@@ -379,11 +379,11 @@ func TestEngineInitialPromptEncouragesTargetedBatches(t *testing.T) {
 		t.Fatalf("expected 1 request, got %d", len(provider.requests))
 	}
 	text := provider.requests[0].Messages[0].Content[0].Text
-	if strings.Contains(text, "Check every source file") {
-		t.Fatalf("initial prompt should not force full-project file reads: %q", text)
+	if strings.Contains(text, "small, targeted batches") {
+		t.Fatalf("initial prompt must not encourage sampling: %q", text)
 	}
-	if !strings.Contains(text, "small, targeted batches") {
-		t.Fatalf("initial prompt should guide batched analysis: %q", text)
+	if !strings.Contains(text, "EVERY") {
+		t.Fatalf("initial prompt must require exhaustive coverage: %q", text)
 	}
 }
 

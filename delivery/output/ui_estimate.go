@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"strings"
 
+	c "github.com/archguard/project/shared/constants"
 	"github.com/archguard/project/shared/models"
 )
 
 const (
 	panelEstimate        = "Estimate"
+	panelRunPlan         = "Run plan"
+	panelResumeHint      = "Analysis incomplete — resume hint"
+	fmtResumeHintLine1   = "Limit reached before all files were covered."
+	fmtResumeHintLine2   = "Re-run with --resume to continue from where it stopped:"
+	fmtCmdMaxToolCalls   = " --max-tool-calls=%d"
 	labelFiles           = "Files"
 	labelEstToolCalls    = "Est. tool calls"
 	labelRunsNeeded      = "Runs needed"
@@ -19,7 +25,23 @@ const (
 	fmtRunsOK            = "%d  (fits in one run with --max-tool-calls=%d)"
 	fmtRunsMany          = "%d  (use --resume between runs; --max-tool-calls=%d each)"
 	fmtSuggestedBudget   = "%d (set --max-tool-calls=%d to finish in one run)"
+	fmtRunHeader         = "Run %d of %d:"
+	fmtCmdBase           = "  ./%s analyze -p %s -r %s --max-tool-calls=%d"
+	fmtCmdOutputJSON     = " --output-json=%s"
+	fmtCmdResume         = " --resume=%s"
+	fmtCmdProvider       = " --provider=%s"
+	fmtCmdModel          = " --model=%s"
+	fmtRepeatNote        = "  (repeat run 2 command %d more time(s) until coverage is complete)"
 )
+
+// RunPlanOpts carries the CLI options needed to reconstruct analyze commands.
+type RunPlanOpts struct {
+	ProjectPath string
+	RulesPath   string
+	OutputJSON  string
+	Provider    string
+	Model       string
+}
 
 func RenderEstimate(r *models.EstimateResult) string {
 	rows := []string{
@@ -47,4 +69,65 @@ func RenderEstimate(r *models.EstimateResult) string {
 	}
 
 	return RenderPanel(panelEstimate, rows)
+}
+
+func RenderResumeHint(opts RunPlanOpts, maxToolCalls int) string {
+	outputJSON := opts.OutputJSON
+	if outputJSON == "" {
+		outputJSON = "report.json"
+	}
+
+	cmd := fmt.Sprintf(fmtCmdBase, c.AppName, opts.ProjectPath, opts.RulesPath, maxToolCalls)
+	cmd += fmt.Sprintf(fmtCmdOutputJSON, outputJSON)
+	cmd += fmt.Sprintf(fmtCmdResume, outputJSON)
+	if opts.Provider != "" {
+		cmd += fmt.Sprintf(fmtCmdProvider, opts.Provider)
+	}
+	if opts.Model != "" {
+		cmd += fmt.Sprintf(fmtCmdModel, opts.Model)
+	}
+
+	rows := []string{
+		WarnStyle.Render(fmtResumeHintLine1),
+		fmtResumeHintLine2,
+		"",
+		mutedStyle.Render(cmd),
+	}
+	return RenderPanel(panelResumeHint, rows)
+}
+
+func RenderEstimateRunPlan(r *models.EstimateResult, opts RunPlanOpts) string {
+	outputJSON := opts.OutputJSON
+	if outputJSON == "" {
+		outputJSON = "report.json"
+	}
+
+	baseCmd := fmt.Sprintf(fmtCmdBase, c.AppName, opts.ProjectPath, opts.RulesPath, r.MaxToolCalls)
+	baseCmd += fmt.Sprintf(fmtCmdOutputJSON, outputJSON)
+	if opts.Provider != "" {
+		baseCmd += fmt.Sprintf(fmtCmdProvider, opts.Provider)
+	}
+	if opts.Model != "" {
+		baseCmd += fmt.Sprintf(fmtCmdModel, opts.Model)
+	}
+
+	resumeCmd := baseCmd + fmt.Sprintf(fmtCmdResume, outputJSON)
+
+	var rows []string
+
+	rows = append(rows, sectionStyle.Render(fmt.Sprintf(fmtRunHeader, 1, r.RunsNeeded)))
+	rows = append(rows, mutedStyle.Render(baseCmd))
+
+	if r.RunsNeeded > 1 {
+		rows = append(rows, "")
+		rows = append(rows, sectionStyle.Render(fmt.Sprintf(fmtRunHeader, 2, r.RunsNeeded)))
+		rows = append(rows, mutedStyle.Render(resumeCmd))
+	}
+
+	if r.RunsNeeded > 2 {
+		rows = append(rows, "")
+		rows = append(rows, mutedStyle.Render(fmt.Sprintf(fmtRepeatNote, r.RunsNeeded-2)))
+	}
+
+	return RenderPanel(panelRunPlan, rows)
 }

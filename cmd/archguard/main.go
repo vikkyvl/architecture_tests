@@ -12,7 +12,7 @@ import (
 )
 
 func estimateCmd() *cobra.Command {
-	var opts cli.EstimateOptions
+	var opts cli.ReviewOptions
 
 	cmd := &cobra.Command{
 		Use:   estimateCommandUse,
@@ -24,7 +24,15 @@ func estimateCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&opts.ProjectPath, projectFlagName, projectFlagShorthand, projectFlagDefault, projectFlagDescription)
 	cmd.Flags().StringVarP(&opts.RulesPath, rulesFlagName, rulesFlagShorthand, "", rulesFlagDescription)
+	cmd.Flags().StringVarP(&opts.OutputJSON, outputJSONFlagName, outputJSONFlagShorthand, outputJSONFlagDefault, outputJSONFlagDesc)
+	cmd.Flags().StringVarP(&opts.OutputMD, outputMDFlagName, outputMDFlagShorthand, outputMDFlagDefault, outputMDFlagDesc)
+	cmd.Flags().StringVarP(&opts.DocsPath, docsFlagName, docsFlagShorthand, "", docsFlagDescription)
+	cmd.Flags().StringVar(&opts.Provider, providerFlagName, "", providerFlagDesc)
+	cmd.Flags().StringVar(&opts.APIKey, apiKeyFlagName, "", apiKeyFlagDesc)
+	cmd.Flags().StringVar(&opts.Model, modelFlagName, "", modelFlagDesc)
 	cmd.Flags().IntVar(&opts.MaxToolCalls, maxToolCallsFlagName, c.DefaultMaxToolCalls, maxToolCallsFlagDesc)
+	cmd.Flags().DurationVar(&opts.Timeout, timeoutFlagName, c.DefaultTimeout, timeoutFlagDesc)
+	cmd.Flags().BoolVar(&opts.Interactive, interactiveFlagName, true, interactiveFlagDesc)
 	_ = cmd.MarkFlagRequired(rulesFlagName)
 
 	return cmd

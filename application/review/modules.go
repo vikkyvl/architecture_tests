@@ -11,17 +11,26 @@ func extractAnalyzedModules(entries []models.AuditEntry) []string {
 	seen := make(map[string]bool)
 	var result []string
 	for _, e := range entries {
-		if e.ToolName != c.ToolReadFile || e.Error != "" {
+		if e.Error != "" {
+			continue
+		}
+		var argKey string
+		switch e.ToolName {
+		case c.ToolReadFile:
+			argKey = c.ArgPath
+		case c.ToolGetClassDependencies:
+			argKey = c.ArgClass
+		default:
 			continue
 		}
 		var args map[string]interface{}
 		if err := json.Unmarshal([]byte(e.Arguments), &args); err != nil {
 			continue
 		}
-		path, ok := args[c.ArgPath].(string)
-		if ok && path != "" && !seen[path] {
-			seen[path] = true
-			result = append(result, path)
+		val, ok := args[argKey].(string)
+		if ok && val != "" && !seen[val] {
+			seen[val] = true
+			result = append(result, val)
 		}
 	}
 	return result
