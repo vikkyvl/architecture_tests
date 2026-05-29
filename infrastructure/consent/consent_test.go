@@ -2,7 +2,10 @@ package consent
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	c "github.com/archguard/project/shared/constants"
@@ -103,6 +106,31 @@ func TestCheckBlockedAndDeniedWriteToOut(t *testing.T) {
 	if !strings.Contains(buf.String(), "DENIED") {
 		t.Errorf("expected DENIED message in out, got: %q", buf.String())
 	}
+}
+
+func TestCheckIsSafeForConcurrentCallers(t *testing.T) {
+	m := &Manager{
+		interactive: false,
+		out:         io.Discard,
+		projectAllowed: []Rule{
+			{Tool: c.ToolReadFile, Pattern: "glob:src/**"},
+		},
+	}
+
+	const goroutines = 32
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			defer wg.Done()
+			path := fmt.Sprintf("src/pkg%d/file.go", i)
+			d := m.Check(c.ToolReadFile, map[string]interface{}{c.ArgPath: path}, 10)
+			if d != c.DecisionProjectAllow {
+				t.Errorf("goroutine %d: decision = %q, want %q", i, d, c.DecisionProjectAllow)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestConsentViewLeavesTrailingLineForBubbleTeaShutdown(t *testing.T) {

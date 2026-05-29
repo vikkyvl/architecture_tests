@@ -17,29 +17,32 @@ const (
 	patternMenuHelpHint   = "Use Up/Down and Enter, or press y/n. Esc declines."
 	patternMenuTitle      = "Save as project consent rule?"
 	patternMenuFooterHint = "To narrow this rule, edit .archguard/consent.yaml after saving."
-	consentPanelWidth     = 76
-	consentLabelWidth     = 12
-	consentCursor         = ">"
-	consentNoCursor       = " "
-	consentLineBreak      = "\n"
-	consentEmptyLine      = ""
-	consentSpace          = " "
-	consentOptionGap      = "  "
-	consentPromptSuffix   = ": "
-	consentFormatChoice   = "[%s] %s"
-	consentFormatRow      = "%s %s  %s"
-	labelAllowOnce        = "Allow once"
-	labelAllowSession     = "Allow session"
-	labelAlwaysAllow      = "Always allow"
-	labelDeny             = "Deny"
-	labelPatternYes       = "Yes — save default pattern"
-	labelPatternNo        = "No — allow once only"
-	descAllowOnce         = "Only this tool call"
-	descAllowSession      = "Same tool until review ends"
-	descAlwaysAllow       = "Remember this pattern"
-	descDeny              = "Return denied tool result"
-	descPatternYes        = "Persist rule to project consent"
-	descPatternNo         = "Don't save a rule"
+
+	consentPanelWidth   = 76
+	consentLabelWidth   = 12
+	consentCursor       = ">"
+	consentNoCursor     = " "
+	consentLineBreak    = "\n"
+	consentEmptyLine    = ""
+	consentSpace        = " "
+	consentOptionGap    = "  "
+	consentPromptSuffix = ": "
+	consentFormatChoice = "[%s] %s"
+	consentFormatRow    = "%s %s  %s"
+
+	labelAllowOnce    = "Allow once"
+	labelAllowSession = "Allow session"
+	labelAlwaysAllow  = "Always allow"
+	labelDeny         = "Deny"
+	labelPatternYes   = "Yes — save default pattern"
+	labelPatternNo    = "No — allow once only"
+
+	descAllowOnce    = "Only this tool call"
+	descAllowSession = "Same tool until review ends"
+	descAlwaysAllow  = "Remember this pattern"
+	descDeny         = "Return denied tool result"
+	descPatternYes   = "Persist rule to project consent"
+	descPatternNo    = "Don't save a rule"
 )
 
 var (
@@ -133,6 +136,7 @@ func runPatternConfirmMenu(rows []string, out io.Writer) string {
 }
 
 func runMenu(rows []string, options []consentOption, cancelKey, helpHint string, out io.Writer) string {
+	drainStdin()
 	model := consentChoiceModel{
 		rows:      rows,
 		options:   options,
@@ -146,13 +150,29 @@ func runMenu(rows []string, options []consentOption, cancelKey, helpHint string,
 	}
 	final, ok := result.(consentChoiceModel)
 	if !ok || final.choice == "" {
-		return options[0].key
+		return cancelKey
 	}
 	if final.choice == choiceInterrupt {
 		syscall.Kill(os.Getpid(), syscall.SIGINT) //nolint:errcheck
 		return cancelKey
 	}
 	return final.choice
+}
+
+func drainStdin() {
+	buf := make([]byte, 256)
+	// Put stdin in non-blocking mode, read whatever is buffered, restore.
+	fd := int(os.Stdin.Fd())
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return
+	}
+	for {
+		n, err := os.Stdin.Read(buf)
+		if n == 0 || err != nil {
+			break
+		}
+	}
+	syscall.SetNonblock(fd, false) //nolint:errcheck
 }
 
 func (m consentChoiceModel) Init() tea.Cmd {

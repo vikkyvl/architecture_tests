@@ -315,6 +315,9 @@ func dispatchTools(content []llm.ContentBlock, toolCalls *int, maxToolCalls int,
 
 	*toolCalls += len(calls)
 	remaining := maxToolCalls - *toolCalls
+	if remaining < 0 {
+		remaining = 0
+	}
 
 	execResults := make([]toolExecResult, len(calls))
 	var wg sync.WaitGroup

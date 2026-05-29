@@ -31,7 +31,10 @@ const (
 	fmtCmdResume         = " --resume=%s"
 	fmtCmdProvider       = " --provider=%s"
 	fmtCmdModel          = " --model=%s"
+	fmtCmdTimeout        = " --timeout=%s"
 	fmtRepeatNote        = "  (repeat run 2 command %d more time(s) until coverage is complete)"
+	labelOptionSingleRun = "Option A — single run (increase budget to %d):"
+	labelOptionSplit     = "Option B — split across %d runs (keep --max-tool-calls=%d):"
 )
 
 // RunPlanOpts carries the CLI options needed to reconstruct analyze commands.
@@ -41,6 +44,7 @@ type RunPlanOpts struct {
 	OutputJSON  string
 	Provider    string
 	Model       string
+	Timeout     string
 }
 
 func RenderEstimate(r *models.EstimateResult) string {
@@ -86,6 +90,9 @@ func RenderResumeHint(opts RunPlanOpts, maxToolCalls int) string {
 	if opts.Model != "" {
 		cmd += fmt.Sprintf(fmtCmdModel, opts.Model)
 	}
+	if opts.Timeout != "" {
+		cmd += fmt.Sprintf(fmtCmdTimeout, opts.Timeout)
+	}
 
 	rows := []string{
 		WarnStyle.Render(fmtResumeHintLine1),
@@ -102,31 +109,43 @@ func RenderEstimateRunPlan(r *models.EstimateResult, opts RunPlanOpts) string {
 		outputJSON = "report.json"
 	}
 
-	baseCmd := fmt.Sprintf(fmtCmdBase, c.AppName, opts.ProjectPath, opts.RulesPath, r.MaxToolCalls)
-	baseCmd += fmt.Sprintf(fmtCmdOutputJSON, outputJSON)
-	if opts.Provider != "" {
-		baseCmd += fmt.Sprintf(fmtCmdProvider, opts.Provider)
+	buildCmd := func(maxCalls int) string {
+		cmd := fmt.Sprintf(fmtCmdBase, c.AppName, opts.ProjectPath, opts.RulesPath, maxCalls)
+		cmd += fmt.Sprintf(fmtCmdOutputJSON, outputJSON)
+		if opts.Provider != "" {
+			cmd += fmt.Sprintf(fmtCmdProvider, opts.Provider)
+		}
+		if opts.Model != "" {
+			cmd += fmt.Sprintf(fmtCmdModel, opts.Model)
+		}
+		return cmd
 	}
-	if opts.Model != "" {
-		baseCmd += fmt.Sprintf(fmtCmdModel, opts.Model)
-	}
-
-	resumeCmd := baseCmd + fmt.Sprintf(fmtCmdResume, outputJSON)
 
 	var rows []string
 
-	rows = append(rows, sectionStyle.Render(fmt.Sprintf(fmtRunHeader, 1, r.RunsNeeded)))
-	rows = append(rows, mutedStyle.Render(baseCmd))
-
 	if r.RunsNeeded > 1 {
+		// Option A: single run with bumped budget
+		singleCmd := buildCmd(r.SuggestedMaxToolCalls)
+		rows = append(rows, sectionStyle.Render(fmt.Sprintf(labelOptionSingleRun, r.SuggestedMaxToolCalls)))
+		rows = append(rows, mutedStyle.Render(singleCmd))
+		rows = append(rows, "")
+
+		// Option B: split runs with current budget
+		baseCmd := buildCmd(r.MaxToolCalls)
+		resumeCmd := baseCmd + fmt.Sprintf(fmtCmdResume, outputJSON)
+		rows = append(rows, sectionStyle.Render(fmt.Sprintf(labelOptionSplit, r.RunsNeeded, r.MaxToolCalls)))
+		rows = append(rows, sectionStyle.Render(fmt.Sprintf(fmtRunHeader, 1, r.RunsNeeded)))
+		rows = append(rows, mutedStyle.Render(baseCmd))
 		rows = append(rows, "")
 		rows = append(rows, sectionStyle.Render(fmt.Sprintf(fmtRunHeader, 2, r.RunsNeeded)))
 		rows = append(rows, mutedStyle.Render(resumeCmd))
-	}
-
-	if r.RunsNeeded > 2 {
-		rows = append(rows, "")
-		rows = append(rows, mutedStyle.Render(fmt.Sprintf(fmtRepeatNote, r.RunsNeeded-2)))
+		if r.RunsNeeded > 2 {
+			rows = append(rows, "")
+			rows = append(rows, mutedStyle.Render(fmt.Sprintf(fmtRepeatNote, r.RunsNeeded-2)))
+		}
+	} else {
+		rows = append(rows, sectionStyle.Render(fmt.Sprintf(fmtRunHeader, 1, 1)))
+		rows = append(rows, mutedStyle.Render(buildCmd(r.MaxToolCalls)))
 	}
 
 	return RenderPanel(panelRunPlan, rows)

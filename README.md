@@ -100,6 +100,37 @@ This will:
 
 ## 🖥️ Usage
 
+ArchGuard has two commands: **`estimate`** (plan before spending tokens) and **`analyze`** (run the full analysis).
+
+### `estimate` — plan before you run
+
+```bash
+./archguard estimate -p ./my-project -r archguard.yaml
+```
+
+`estimate` walks the file tree, counts source files, and calculates how many LLM tool calls the analysis will need — without making a single API call. It then asks whether to proceed:
+
+- **Yes** → launches `analyze` immediately
+- **No** → prints a ready-to-copy run plan with the exact commands to execute (including `--resume` chains for multi-run projects)
+
+```
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  Estimate                                                                    │
+│                                                                              │
+│  Project         dddsample-core (java)                                       │
+│  Files           146                                                         │
+│  Est. tool calls 308                                                         │
+│  By layer        Domain          42 files  ~88 calls                        │
+│                  Application     18 files  ~38 calls                        │
+│                  Infrastructure  31 files  ~65 calls                        │
+│  Runs needed     4  (use --resume between runs; --max-tool-calls=100 each)  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+```
+
+> The estimated call count scales with the number of **domain rules** in your config: each domain rule requires reading relevant file contents (not just imports), so more rules → more `read_file` calls → higher estimate.
+
+### `analyze` — run the full analysis
+
 ```bash
 ./archguard analyze \
   --project  ./my-project \
@@ -107,7 +138,9 @@ This will:
   --provider anthropic
 ```
 
-### All flags
+Press **Ctrl+C** at any time to interrupt cleanly — all subprocesses (external MCP servers) are shut down before exit.
+
+### All flags (both commands)
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
@@ -122,11 +155,14 @@ This will:
 | `--interactive` | — | `true` | Show consent prompts; set `false` for CI to deny all unapproved calls |
 | `--output-json` | `-j` | `report.json` | Path for the JSON report |
 | `--output-md` | `-m` | `report.md` | Path for the Markdown report |
-| `--resume` | — | — | Path to a **previous** `report.json` to continue from (see [Resume mode](#️-resume-mode)) |
+| `--resume` | — | — | `analyze` only: path to a **previous** `report.json` to continue from (see [Resume mode](#️-resume-mode)) |
 
 ### Examples
 
 ```bash
+# Estimate first, then decide
+./archguard estimate -p ./app -r archguard.yaml
+
 # Use Gemini with a cheaper model override
 ./archguard analyze -p ./app -r archguard.yaml --provider gemini --model gemini-2.0-flash
 

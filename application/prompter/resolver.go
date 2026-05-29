@@ -9,11 +9,11 @@ const (
 	systemPromptIntro          = "You are an expert software architecture reviewer.\n"
 	systemPromptGoal           = "Analyze the codebase and find architectural violations.\n\n"
 	systemPromptProcessHeader  = "Process:\n"
-	systemPromptProcess        = "1. Call get_architecture_rules to load all layer constraints.\n2. Call get_project_structure to get the COMPLETE file list.\n3. For EVERY file in the list — call get_class_dependencies. No file may be skipped. Work through them layer by layer.\n4. When a dependency is ambiguous or a violation seems likely, call read_file for deeper inspection.\n5. Call report_violation IMMEDIATELY for each violation found — do not batch.\n6. Stop ONLY after every file from step 2 has been processed.\n\n"
+	systemPromptProcess        = "1. Call get_architecture_rules to load all rules (structural + domain).\n2. Call get_project_structure to get the COMPLETE file list.\n3. Process files in a SINGLE COMBINED PASS — do NOT do a full structural sweep first and domain sweep second:\n   a. For every file: call get_class_dependencies to check layer dependencies.\n   b. If the file name or path suggests it implements logic covered by any domain rule (e.g. payment processing, audit logging, error handling, data isolation) — call read_file on it IMMEDIATELY in the same pass, before moving to the next file.\n4. Call report_violation IMMEDIATELY for each violation found — do not batch.\n5. Stop only after every file has been processed in this combined pass.\n\n"
 	systemPromptExternalHeader = "Configured external systems (optional; do not query unless explicitly requested):\n"
 	systemPromptExternalLine   = "- %s: external context may be available through system=\"%s\"\n"
 	systemPromptChecksHeader   = "What to check:\n"
-	systemPromptChecks         = "- Structural: verify each class only depends on allowed layers.\n- Semantic: analyze business logic, not just imports.\n- Domain: check domain-specific requirements.\n\n"
+	systemPromptChecks         = "- Structural: verify each class only depends on allowed layers (use get_class_dependencies).\n- Domain: check domain-specific requirements by reading actual file content (use read_file) — imports alone cannot reveal missing audit calls, wrong error handling, or business rule violations.\n\n"
 	systemPromptProjectLine    = "Project: %s\n"
 	systemPromptLanguageLine   = "Language: %s\n"
 	systemPromptDomainLine     = "Domain: %s\n"
@@ -26,7 +26,7 @@ const (
 	systemPromptRuleLine       = "- %s to %s: %s\n"
 	systemPromptDomainHeader   = "\nDomain rules:\n"
 	systemPromptDomainRuleLine = "- %s [%s]: %s\n"
-	systemPromptGuidelines     = "\nCoverage requirement — CRITICAL:\n- get_class_dependencies MUST be called on every source file, no exceptions.\n- Count your calls: the total must match the number of files from get_project_structure.\n- Stopping before full coverage means violations in unchecked files will be silently missed.\n- Report exact file paths and line numbers for each violation.\n- Provide a fix suggestion for each violation.\n"
+	systemPromptGuidelines     = "\nCoverage requirement — CRITICAL:\n- get_class_dependencies MUST be called on every source file, no exceptions.\n- read_file MUST be called for every file that is plausibly relevant to a domain rule — do not wait until structural analysis is complete; do it in the same pass as get_class_dependencies for that file.\n- get_class_dependencies shows only imports; it cannot detect missing audit calls, incorrect error handling, or violated business invariants. Those require read_file.\n- Never exhaust your call budget on get_class_dependencies alone. If the file list is large, prioritise domain-relevant files for read_file early in the pass.\n- Report exact file paths and line numbers for each violation.\n- Provide a fix suggestion for each violation.\n"
 	pathJoinSeparator          = ", "
 )
 

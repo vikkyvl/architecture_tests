@@ -138,8 +138,8 @@ func (a *AnthropicClient) SendMessage(req Request) (*Response, error) {
 	markCacheBreakpoints(&req)
 	if a.cacheTail {
 		markTailCacheBreakpoint(&req)
-		markMidPrefixCacheBreakpoint(&req)
 	}
+	markMidPrefixCacheBreakpoint(&req)
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.KindInternal, operationAnthropicRequest, errMarshalRequest, err)

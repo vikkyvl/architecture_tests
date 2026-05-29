@@ -1,6 +1,9 @@
 package constants
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	ProviderAnthropic = "anthropic"
@@ -69,8 +72,6 @@ const (
 	NotionVersion       = "2022-06-28"
 	NotionVersionHeader = "Notion-Version"
 	NotionTimeout       = 30 * time.Second
-	NotionMaxResults    = 3
-	NotionMaxContentLen = 3000
 )
 
 const (
@@ -78,6 +79,20 @@ const (
 	EnvGeminiKey    = "GEMINI_API_KEY"
 	EnvOpenAIKey    = "OPENAI_API_KEY"
 )
+
+// OpenAIReasoningPrefixes lists OpenAI model-name prefixes whose Chat
+// Completions endpoint rejects `max_tokens` and requires
+// `max_completion_tokens` instead. Expand on demand.
+var OpenAIReasoningPrefixes = []string{"o1", "o3", "o4", "gpt-5"}
+
+func IsOpenAIReasoningModel(name string) bool {
+	for _, prefix := range OpenAIReasoningPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 const (
 	HeaderAnthropicRequestsRemaining = "anthropic-ratelimit-requests-remaining"

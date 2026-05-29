@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	c "github.com/archguard/project/shared/constants"
 )
@@ -42,6 +43,7 @@ const (
 type Decision = string
 
 type Manager struct {
+	mu             sync.Mutex
 	sessionAllowed []Rule
 	projectAllowed []Rule
 	userAllowed    []Rule
@@ -78,6 +80,9 @@ func (m *Manager) writer() io.Writer {
 }
 
 func (m *Manager) Check(toolName string, args map[string]interface{}, budget int) Decision {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if blocked, value := m.isBlockedCall(toolName, args); blocked {
 		fmt.Fprint(m.writer(), renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgBlockedTool, toolName, value))))
 		return c.DecisionBlocked

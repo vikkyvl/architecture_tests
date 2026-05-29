@@ -48,5 +48,8 @@ type ExternalConfig struct {
 	SearchTool    string            `yaml:"search_tool"`
 	SearchArg     string            `yaml:"search_arg"`
 	QueryTemplate string            `yaml:"query_template,omitempty"`
+	ProjectFilter string            `yaml:"project_filter,omitempty"`
 	DefaultQuery  string            `yaml:"default_query,omitempty"`
+	Include       []string          `yaml:"include,omitempty"`
+	Exclude       []string          `yaml:"exclude,omitempty"`
 }

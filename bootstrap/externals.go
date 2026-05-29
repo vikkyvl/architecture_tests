@@ -9,7 +9,7 @@ import (
 	"github.com/archguard/project/application/review"
 	"github.com/archguard/project/config"
 	"github.com/archguard/project/delivery/output"
-	"github.com/archguard/project/infrastructure/external"
+	extpkg "github.com/archguard/project/infrastructure/external"
 	"github.com/archguard/project/infrastructure/mcp"
 	c "github.com/archguard/project/shared/constants"
 )
@@ -89,23 +89,28 @@ func promptExternalContext(systems []config.ExternalConfig, cfg *config.Config, 
 }
 
 func defaultExternalQuery(cfg *config.Config, sys config.ExternalConfig) string {
+	var baseQuery string
 	if strings.TrimSpace(sys.DefaultQuery) != "" {
-		return sys.DefaultQuery
+		baseQuery = os.ExpandEnv(sys.DefaultQuery)
+	} else {
+		var parts []string
+		if cfg.Project.Name != "" {
+			parts = append(parts, cfg.Project.Name)
+		}
+		if cfg.DomainContext.Domain != "" {
+			parts = append(parts, cfg.DomainContext.Domain)
+		}
+		if cfg.DomainContext.Description != "" {
+			parts = append(parts, cfg.DomainContext.Description)
+		}
+		if len(parts) == 0 {
+			baseQuery = sys.System
+		} else {
+			baseQuery = strings.Join(parts, externalQuerySeparator)
+		}
 	}
-	var parts []string
-	if cfg.Project.Name != "" {
-		parts = append(parts, cfg.Project.Name)
-	}
-	if cfg.DomainContext.Domain != "" {
-		parts = append(parts, cfg.DomainContext.Domain)
-	}
-	if cfg.DomainContext.Description != "" {
-		parts = append(parts, cfg.DomainContext.Description)
-	}
-	if len(parts) == 0 {
-		return sys.System
-	}
-	return strings.Join(parts, externalQuerySeparator)
+	filter := os.ExpandEnv(sys.ProjectFilter)
+	return extpkg.BuildQuery(baseQuery, sys.QueryTemplate, filter)
 }
 
 func debugExternalsEnabled() bool {
@@ -116,17 +121,17 @@ func externalSystemReadiness(sys config.ExternalConfig) (bool, string) {
 	if sys.System == "" || len(sys.Command) == 0 || sys.SearchTool == "" || sys.SearchArg == "" {
 		return false, externalIncompleteReason
 	}
-	missing := missingEnvReferences(sys.Env)
+	missing := missingEnvReferences(sys.Env, sys.ProjectFilter)
 	if len(missing) > 0 {
 		return false, externalMissingEnvPrefix + strings.Join(missing, externalEnvSeparator)
 	}
 	return true, ""
 }
 
-func missingEnvReferences(env map[string]string) []string {
+func missingEnvReferences(env map[string]string, extraValues ...string) []string {
 	seen := make(map[string]bool)
 	var missing []string
-	for _, value := range env {
+	scanValue := func(value string) {
 		os.Expand(value, func(name string) string {
 			v := os.Getenv(name)
 			if v == "" && !seen[name] {
@@ -135,6 +140,12 @@ func missingEnvReferences(env map[string]string) []string {
 			}
 			return v
 		})
+	}
+	for _, value := range env {
+		scanValue(value)
+	}
+	for _, value := range extraValues {
+		scanValue(value)
 	}
 	sort.Strings(missing)
 	return missing
@@ -147,12 +158,12 @@ func systemLabel(sys config.ExternalConfig) string {
 	return externalUnnamedSystem
 }
 
-func buildExternals(cfgs []config.ExternalConfig) (map[string]mcp.ExternalSearcher, map[string]bool, []*external.MCPClient) {
+func buildExternals(cfgs []config.ExternalConfig) (map[string]mcp.ExternalSearcher, map[string]bool, []*extpkg.MCPClient) {
 	searchers := make(map[string]mcp.ExternalSearcher, len(cfgs))
 	allowed := make(map[string]bool, len(cfgs))
-	var closers []*external.MCPClient
+	var closers []*extpkg.MCPClient
 	for _, ec := range cfgs {
-		cl := external.NewMCPClient(ec)
+		cl := extpkg.NewMCPClient(ec)
 		searchers[ec.System] = cl
 		allowed[ec.System] = true
 		closers = append(closers, cl)

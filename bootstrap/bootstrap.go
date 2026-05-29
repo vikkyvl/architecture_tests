@@ -264,6 +264,7 @@ func (a *App) Run() error {
 			OutputJSON:  a.opts.OutputJSON,
 			Provider:    a.opts.Provider,
 			Model:       a.opts.Model,
+			Timeout:     a.opts.Timeout.String(),
 		}, a.opts.MaxToolCalls))
 	}
 

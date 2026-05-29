@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	estimateOverhead   = 2
-	estimateClassDeps  = 1.0
-	estimateReadFile   = 0.3
-	estimateViolations = 0.1
-	estimatePerFile    = estimateClassDeps + estimateReadFile + estimateViolations
+	estimateOverhead        = 2
+	estimateClassDeps       = 1.0
+	estimateViolations      = 0.1
+	estimateReadFileBase    = 0.1  // structural ambiguity, no domain rules
+	estimateReadFilePerRule = 0.15 // each domain rule adds ~15% file coverage
+	estimateReadFileCap     = 1.0  // cannot exceed one read per file
 )
 
 type EstimateOptions struct {
@@ -89,7 +90,12 @@ func Estimate(opts EstimateOptions) (*models.EstimateResult, error) {
 		return nil
 	})
 
-	estimated := estimateOverhead + int(math.Round(float64(totalFiles)*estimatePerFile))
+	readFileRatio := math.Min(estimateReadFileCap,
+		estimateReadFileBase+float64(len(cfg.DomainContext.Rules))*estimateReadFilePerRule,
+	)
+	perFile := estimateClassDeps + readFileRatio + estimateViolations
+
+	estimated := estimateOverhead + int(math.Round(float64(totalFiles)*perFile))
 
 	maxCalls := opts.MaxToolCalls
 	if maxCalls <= 0 {
@@ -103,7 +109,7 @@ func Estimate(opts EstimateOptions) (*models.EstimateResult, error) {
 	layers := make([]models.LayerEstimate, 0, len(cfg.Layers))
 	for _, l := range cfg.Layers {
 		n := filesByLayer[l.Name]
-		calls := int(math.Round(float64(n) * estimatePerFile))
+		calls := int(math.Round(float64(n) * perFile))
 		layers = append(layers, models.LayerEstimate{Name: l.Name, FileCount: n, ToolCalls: calls})
 	}
 

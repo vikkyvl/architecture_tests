@@ -8,13 +8,22 @@ import (
 )
 
 const (
-	estimateMsgProceed   = "Proceed with analysis?"
-	estimateMsgStartRun  = "Start run 1 of %d now?"
-	estimateLabelYes     = "Yes, analyze now"
-	estimateLabelYesRun1 = "Yes, start run 1"
-	estimateLabelNo      = "No, cancel"
+	estimateMsgProceed = "Proceed with analysis?"
+	estimateMsgChoose  = "How would you like to proceed?"
+
+	estimateLabelYes       = "Yes, analyze now"
+	estimateLabelSingleRun = "Single run  (--max-tool-calls=%d)"
+	estimateLabelSplitRun  = "Split into %d runs  (--max-tool-calls=%d each, use --resume)"
+	estimateLabelNo        = "Show me the commands"
+	estimateLabelExit      = "Exit"
+
+	estimateKeySingleRun = "a"
+	estimateKeySplitRun  = "s"
+	estimateKeyNo        = "n"
+	estimateKeyExit      = "q"
+
 	estimateRowSingleRun = "Estimated: %d tool calls  •  budget: %d"
-	estimateRowMultiRun  = "Estimated: %d tool calls across %d runs  •  budget: %d/run"
+	estimateRowMultiRun  = "Estimated: %d tool calls  •  suggested budget: %d (single run) or %d/run (split)"
 )
 
 func RunEstimate(opts ReviewOptions) error {
@@ -41,9 +50,7 @@ func RunEstimate(opts ReviewOptions) error {
 	}
 
 	if !opts.Interactive {
-		if result.RunsNeeded > 1 {
-			out.WriteProgress(output.RenderEstimateRunPlan(result, planOpts))
-		}
+		out.WriteProgress(output.RenderEstimateRunPlan(result, planOpts))
 		return nil
 	}
 
@@ -52,14 +59,26 @@ func RunEstimate(opts ReviewOptions) error {
 		if output.AskYesNo(estimateMsgProceed, rows, estimateLabelYes, estimateLabelNo) {
 			return RunReview(opts)
 		}
+		out.WriteProgress(output.RenderEstimateRunPlan(result, planOpts))
 		return nil
 	}
 
-	out.WriteProgress(output.RenderEstimateRunPlan(result, planOpts))
+	rows := []string{fmt.Sprintf(estimateRowMultiRun, result.EstimatedToolCalls, result.SuggestedMaxToolCalls, result.MaxToolCalls)}
+	choice := output.AskChoice(estimateMsgChoose, rows, []output.MenuOption{
+		{Key: estimateKeySingleRun, Label: fmt.Sprintf(estimateLabelSingleRun, result.SuggestedMaxToolCalls), Hint: "one run, larger budget"},
+		{Key: estimateKeySplitRun, Label: fmt.Sprintf(estimateLabelSplitRun, result.RunsNeeded, result.MaxToolCalls), Hint: "resume between runs"},
+		{Key: estimateKeyNo, Label: estimateLabelNo, Hint: "print commands to copy", Default: true},
+		{Key: estimateKeyExit, Label: estimateLabelExit},
+	})
 
-	rows := []string{fmt.Sprintf(estimateRowMultiRun, result.EstimatedToolCalls, result.RunsNeeded, result.MaxToolCalls)}
-	if output.AskYesNo(fmt.Sprintf(estimateMsgStartRun, result.RunsNeeded), rows, estimateLabelYesRun1, estimateLabelNo) {
+	switch choice {
+	case estimateKeySingleRun:
+		opts.MaxToolCalls = result.SuggestedMaxToolCalls
 		return RunReview(opts)
+	case estimateKeySplitRun:
+		return RunReview(opts)
+	case estimateKeyNo:
+		out.WriteProgress(output.RenderEstimateRunPlan(result, planOpts))
 	}
 	return nil
 }

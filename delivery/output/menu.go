@@ -14,21 +14,23 @@ const (
 	yesNoChoiceNo    = "n"
 	yesNoCursor      = ">"
 	yesNoNoCursor    = " "
-	yesNoMenuHint    = "Arrows or y/n to choose, Enter to confirm, Esc cancels."
 	yesNoMenuPadding = 76
-	yesNoKeyUpperY   = "Y"
-	yesNoKeyUpperN   = "N"
-	yesNoKeyCtrlC    = "ctrl+c"
-	yesNoKeyEsc      = "esc"
-	yesNoKeyUp       = "up"
-	yesNoKeyDown     = "down"
-	yesNoKeyLeft     = "left"
-	yesNoKeyRight    = "right"
-	yesNoKeyK        = "k"
-	yesNoKeyJ        = "j"
-	yesNoKeyH        = "h"
-	yesNoKeyL        = "l"
-	yesNoKeyEnter    = "enter"
+
+	yesNoKeyUpperY = "Y"
+	yesNoKeyUpperN = "N"
+	yesNoKeyCtrlC  = "ctrl+c"
+	yesNoKeyEsc    = "esc"
+	yesNoKeyUp     = "up"
+	yesNoKeyDown   = "down"
+	yesNoKeyLeft   = "left"
+	yesNoKeyRight  = "right"
+	yesNoKeyK      = "k"
+	yesNoKeyJ      = "j"
+	yesNoKeyH      = "h"
+	yesNoKeyL      = "l"
+	yesNoKeyEnter  = "enter"
+
+	yesNoMenuHint    = "Arrows or y/n to choose, Enter to confirm, Esc cancels."
 	yesNoEmptyLine   = ""
 	yesNoLineBreak   = "\n"
 	yesNoHintGap     = "  "
@@ -79,9 +81,10 @@ func (m yesNoModel) Init() tea.Cmd {
 func (m yesNoModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+		switch key {
 		case yesNoKeyCtrlC, yesNoKeyEsc:
-			m.choice = yesNoChoiceNo
+			m.choice = m.options[len(m.options)-1].key
 			return m, tea.Quit
 		case yesNoKeyUp, yesNoKeyK, yesNoKeyLeft, yesNoKeyH:
 			if m.cursor > 0 {
@@ -94,12 +97,13 @@ func (m yesNoModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case yesNoKeyEnter:
 			m.choice = m.options[m.cursor].key
 			return m, tea.Quit
-		case yesNoChoiceYes, yesNoKeyUpperY:
-			m.choice = yesNoChoiceYes
-			return m, tea.Quit
-		case yesNoChoiceNo, yesNoKeyUpperN:
-			m.choice = yesNoChoiceNo
-			return m, tea.Quit
+		default:
+			for _, opt := range m.options {
+				if key == opt.key || key == strings.ToUpper(opt.key) {
+					m.choice = opt.key
+					return m, tea.Quit
+				}
+			}
 		}
 	}
 	return m, nil
@@ -132,23 +136,43 @@ func (m yesNoModel) View() string {
 	return yesNoPanelStyle.Render(strings.Join(lines, yesNoLineBreak)) + yesNoLineBreak
 }
 
-func AskYesNo(title string, rows []string, yesLabel, noLabel string) bool {
-	model := yesNoModel{
-		title: title,
-		rows:  rows,
-		options: []yesNoOption{
-			{key: yesNoChoiceYes, label: yesLabel},
-			{key: yesNoChoiceNo, label: noLabel},
-		},
+// MenuOption is a selectable item in AskChoice.
+type MenuOption struct {
+	Key     string
+	Label   string
+	Hint    string
+	Default bool // if true, cursor starts on this option
+}
+
+// AskChoice shows an interactive menu and returns the key of the chosen option.
+// The last option is used as the cancel/Esc fallback.
+func AskChoice(title string, rows []string, options []MenuOption) string {
+	initialCursor := len(options) - 1
+	opts := make([]yesNoOption, len(options))
+	for i, o := range options {
+		opts[i] = yesNoOption{key: o.Key, label: o.Label, hint: o.Hint}
+		if o.Default {
+			initialCursor = i
+		}
 	}
+
+	model := yesNoModel{title: title, rows: rows, options: opts, cursor: initialCursor}
 	program := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr))
 	out, err := program.Run()
-	if err != nil {
-		return false
+	if err != nil || out == nil {
+		return options[len(options)-1].Key
 	}
+
 	final, ok := out.(yesNoModel)
 	if !ok || final.choice == "" {
-		return false
+		return options[len(options)-1].Key
 	}
-	return final.choice == yesNoChoiceYes
+	return final.choice
+}
+
+func AskYesNo(title string, rows []string, yesLabel, noLabel string) bool {
+	return AskChoice(title, rows, []MenuOption{
+		{Key: yesNoChoiceYes, Label: yesLabel, Default: true},
+		{Key: yesNoChoiceNo, Label: noLabel},
+	}) == yesNoChoiceYes
 }

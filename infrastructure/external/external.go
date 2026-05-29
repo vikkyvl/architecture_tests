@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -37,32 +38,87 @@ func (c *MCPClient) Search(query string) (string, error) {
 	if len(c.tools) > 0 && !containsString(c.tools, c.cfg.SearchTool) {
 		return "", apperrors.ExternalService(fmt.Sprintf(errMCPToolMissing, c.cfg.SearchTool, strings.Join(c.tools, mcpToolListSeparator)))
 	}
-	value := query
-	if c.cfg.QueryTemplate != "" {
-		value = fmt.Sprintf(c.cfg.QueryTemplate, query)
-	}
 	result, err := c.callTool(c.cfg.SearchTool, map[string]interface{}{
-		c.cfg.SearchArg: value,
+		c.cfg.SearchArg: query,
 	})
 	if err != nil {
 		return "", err
 	}
 	var toolResult struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+		Content []contentBlock `json:"content"`
 	}
 	if err := json.Unmarshal(result, &toolResult); err != nil {
 		return "", apperrors.Wrap(apperrors.KindExternalService, mcpOperation, errMCPToolCall, err)
 	}
 	var sb strings.Builder
-	for _, block := range toolResult.Content {
-		if block.Type == mcpContentTypeText {
-			sb.WriteString(block.Text)
-		}
+	for _, block := range filterBlocks(toolResult.Content, c.cfg.Include, c.cfg.Exclude) {
+		sb.WriteString(block.Text)
 	}
 	return sb.String(), nil
+}
+
+type contentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func BuildQuery(query, template, filter string) string {
+	switch {
+	case template == "" && filter == "":
+		return query
+	case template == "":
+		return filter + " " + query
+	default:
+		n := strings.Count(template, "%s")
+		switch n {
+		case 0:
+			return template
+		case 1:
+			return fmt.Sprintf(template, query)
+		default:
+			return fmt.Sprintf(template, query, filter)
+		}
+	}
+}
+
+func filterBlocks(blocks []contentBlock, include, exclude []string) []contentBlock {
+	if len(include) == 0 && len(exclude) == 0 {
+		return blocks
+	}
+	out := make([]contentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Type != mcpContentTypeText {
+			continue
+		}
+		if len(include) > 0 && !matchesAny(b.Text, include) {
+			continue
+		}
+		if matchesAny(b.Text, exclude) {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+func matchesAny(text string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.ContainsAny(p, "*?[") {
+			if ok, _ := filepath.Match(p, text); ok {
+				return true
+			}
+			for _, line := range strings.Split(text, "\n") {
+				if ok, _ := filepath.Match(p, strings.TrimSpace(line)); ok {
+					return true
+				}
+			}
+		} else {
+			if strings.Contains(text, p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *MCPClient) Close() {

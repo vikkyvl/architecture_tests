@@ -18,11 +18,15 @@ const (
 )
 
 type oRequest struct {
-	Model     string     `json:"model"`
-	MaxTokens int        `json:"max_tokens,omitempty"`
-	Messages  []oMessage `json:"messages"`
-	Tools     []oTool    `json:"tools,omitempty"`
+	Model               string     `json:"model"`
+	MaxTokens           int        `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int        `json:"max_completion_tokens,omitempty"`
+	Store               *bool      `json:"store,omitempty"`
+	Messages            []oMessage `json:"messages"`
+	Tools               []oTool    `json:"tools,omitempty"`
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 type oMessage struct {
 	Role       string      `json:"role"`
@@ -166,8 +170,13 @@ func (o *OpenAIClient) SendMessage(req Request) (*Response, error) {
 
 func (o *OpenAIClient) toOpenAI(req Request) oRequest {
 	or := oRequest{
-		Model:     o.model,
-		MaxTokens: req.MaxTokens,
+		Model: o.model,
+		Store: boolPtr(false),
+	}
+	if c.IsOpenAIReasoningModel(o.model) {
+		or.MaxCompletionTokens = req.MaxTokens
+	} else {
+		or.MaxTokens = req.MaxTokens
 	}
 
 	if sys := SystemText(req.System); sys != "" {
@@ -207,7 +216,7 @@ func (o *OpenAIClient) assistantMessage(msg Message) oMessage {
 	for _, b := range msg.Content {
 		switch b.Type {
 		case c.ContentTypeText:
-			m.Content = b.Text
+			m.Content += b.Text
 		case c.ContentTypeToolUse:
 			args := string(b.Input)
 			if args == "" {

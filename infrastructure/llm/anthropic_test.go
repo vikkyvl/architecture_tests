@@ -273,6 +273,87 @@ func TestContentBlockMarshalOmitsCacheControlWhenNil(t *testing.T) {
 	}
 }
 
+func TestSendMessageMidPrefixCacheWithoutTail(t *testing.T) {
+	req := Request{
+		System: []SystemBlock{NewSystemBlock("sys", false)},
+		Tools:  []Tool{{Name: "t", InputSchema: json.RawMessage(`{}`)}},
+		Messages: []Message{
+			{Role: c.RoleUser, Content: []ContentBlock{{Type: c.ContentTypeText, Text: "hi"}}},
+			{Role: c.RoleAssistant, Content: []ContentBlock{
+				{Type: c.ContentTypeToolUse, ID: "tu1", Name: c.ToolReadFile, Input: json.RawMessage(`{}`)},
+			}},
+			{Role: c.RoleUser, Content: []ContentBlock{
+				{Type: c.ContentTypeToolResult, ToolUseID: "tu1", Content: "payload"},
+			}},
+			{Role: c.RoleAssistant, Content: []ContentBlock{
+				{Type: c.ContentTypeToolUse, ID: "tu2", Name: c.ToolReadFile, Input: json.RawMessage(`{}`)},
+			}},
+			{Role: c.RoleUser, Content: []ContentBlock{
+				{Type: c.ContentTypeToolResult, ToolUseID: "tu2", Content: "payload2"},
+			}},
+		},
+	}
+	markCacheBreakpoints(&req)
+	markMidPrefixCacheBreakpoint(&req)
+
+	mid := req.Messages[2].Content[0]
+	if mid.CacheControl == nil || mid.CacheControl.Type != c.CacheControlEphemeral {
+		t.Fatalf("mid-prefix tool_result must carry ephemeral cache marker, got %#v", mid.CacheControl)
+	}
+	tail := req.Messages[4].Content[0]
+	if tail.CacheControl != nil {
+		t.Errorf("tail tool_result must not be marked when cacheTail is off, got %#v", tail.CacheControl)
+	}
+}
+
+func TestSendMessageCacheBudgetCappedAtFour(t *testing.T) {
+	req := buildMultiTurnRequestWithStaleMarkers(6)
+	req.System = []SystemBlock{NewSystemBlock("sys", false)}
+	req.Tools = []Tool{{Name: "t", InputSchema: json.RawMessage(`{}`)}}
+
+	markCacheBreakpoints(&req)
+	markTailCacheBreakpoint(&req)
+	markMidPrefixCacheBreakpoint(&req)
+
+	total := 0
+	for _, sb := range req.System {
+		if sb.CacheControl != nil {
+			total++
+		}
+	}
+	for _, tool := range req.Tools {
+		if tool.CacheControl != nil {
+			total++
+		}
+	}
+	midMarked, tailMarked := false, false
+	for i, msg := range req.Messages {
+		for _, b := range msg.Content {
+			if b.CacheControl == nil {
+				continue
+			}
+			total++
+			if b.Type != c.ContentTypeToolResult {
+				continue
+			}
+			if i == len(req.Messages)-1 {
+				tailMarked = true
+			} else {
+				midMarked = true
+			}
+		}
+	}
+	if total != 4 {
+		t.Fatalf("expected exactly 4 cache_control markers with cacheTail+mid-prefix, got %d", total)
+	}
+	if !midMarked {
+		t.Errorf("mid-prefix tool_result must carry a marker")
+	}
+	if !tailMarked {
+		t.Errorf("tail tool_result must carry a marker when cacheTail is on")
+	}
+}
+
 func TestAnthropicCacheTailGatedByOption(t *testing.T) {
 	enabled, err := NewAnthropicClientWithOptions("k", "m", RuntimeOptions{AnthropicCacheTail: true}, nil)
 	if err != nil {
