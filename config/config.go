@@ -1,12 +1,34 @@
 package config
 
 type Config struct {
-	Project       ProjectConfig       `yaml:"project"`
-	Layers        []LayerConfig       `yaml:"layers"`
-	Rules         []RuleConfig        `yaml:"rules"`
-	DomainContext DomainContextConfig `yaml:"domain_context"`
-	External      []ExternalConfig    `yaml:"external,omitempty"`
-	Runtime       RuntimeConfig       `yaml:"runtime,omitempty"`
+	Project          ProjectConfig       `yaml:"project"`
+	Layers           []LayerConfig       `yaml:"layers"`
+	Rules            []RuleConfig        `yaml:"rules"`
+	DomainContext    DomainContextConfig `yaml:"domain_context"`
+	DesignPrinciples []DesignPrinciple   `yaml:"design_principles,omitempty"`
+	Architecture     Architecture        `yaml:"architecture,omitempty"`
+	External         []ExternalConfig    `yaml:"external,omitempty"`
+	Runtime          RuntimeConfig       `yaml:"runtime,omitempty"`
+}
+
+type Architecture struct {
+	Style       string                  `yaml:"style"`
+	Description string                  `yaml:"description,omitempty"`
+	Invariants  []ArchitectureInvariant `yaml:"invariants,omitempty"`
+}
+
+type ArchitectureInvariant struct {
+	ID          string   `yaml:"id"`
+	Description string   `yaml:"description"`
+	Severity    string   `yaml:"severity"`
+	AppliesTo   []string `yaml:"applies_to,omitempty"`
+}
+
+type DesignPrinciple struct {
+	ID          string   `yaml:"id"`
+	Description string   `yaml:"description"`
+	Severity    string   `yaml:"severity"`
+	AppliesTo   []string `yaml:"applies_to,omitempty"`
 }
 
 type ProjectConfig struct {

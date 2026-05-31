@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/archguard/project/config"
 	"github.com/archguard/project/shared/apperrors"
@@ -47,6 +48,14 @@ type readFileEntry struct {
 	Size int
 }
 
+type Observer interface {
+	LimitReached(message string)
+	Retry(provider string, attempt, maxAttempts int, wait time.Duration, err error)
+	LLMText(text string)
+	ToolResult(callNumber int, toolName string, resultSize int, err error)
+	AnalysisComplete()
+}
+
 type Resolver struct {
 	projectPath        string
 	docsPath           string
@@ -68,9 +77,10 @@ type Resolver struct {
 	readTurn           int
 	keepWindowTurns    int
 	previouslyAnalyzed map[string]bool // files from a prior run; immutable after construction
+	observer           Observer
 }
 
-func NewResolver(cfg ResolverConfig, cm ConsentChecker, al AuditLogger, externals map[string]ExternalSearcher) *Resolver {
+func NewResolver(cfg ResolverConfig, cm ConsentChecker, al AuditLogger, externals map[string]ExternalSearcher, observer Observer) *Resolver {
 	prevViolations := make([]models.Violation, len(cfg.InitialViolations))
 	copy(prevViolations, cfg.InitialViolations)
 
@@ -97,6 +107,7 @@ func NewResolver(cfg ResolverConfig, cm ConsentChecker, al AuditLogger, external
 		readFiles:          make(map[string]readFileEntry),
 		keepWindowTurns:    cfg.KeepWindowTurns,
 		previouslyAnalyzed: prevAnalyzed,
+		observer:           observer,
 	}
 }
 

@@ -147,6 +147,9 @@ type MenuOption struct {
 // AskChoice shows an interactive menu and returns the key of the chosen option.
 // The last option is used as the cancel/Esc fallback.
 func AskChoice(title string, rows []string, options []MenuOption) string {
+	if len(options) == 0 {
+		return ""
+	}
 	initialCursor := len(options) - 1
 	opts := make([]yesNoOption, len(options))
 	for i, o := range options {

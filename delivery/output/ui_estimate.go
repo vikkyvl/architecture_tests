@@ -118,6 +118,9 @@ func RenderEstimateRunPlan(r *models.EstimateResult, opts RunPlanOpts) string {
 		if opts.Model != "" {
 			cmd += fmt.Sprintf(fmtCmdModel, opts.Model)
 		}
+		if opts.Timeout != "" {
+			cmd += fmt.Sprintf(fmtCmdTimeout, opts.Timeout)
+		}
 		return cmd
 	}
 

@@ -149,7 +149,7 @@ func NewApp(opts Options, out *output.OutputTransport, obs review.Observer) (*Ap
 	}
 
 	var ctxResolver ContextBuilder = contextresolver.NewResolver(
-		cfg.Project, cfg.Layers, cfg.Rules, cfg.DomainContext, cfg.External,
+		cfg.Project, cfg.Layers, cfg.Rules, cfg.DomainContext, cfg.DesignPrinciples, cfg.Architecture, cfg.External,
 	)
 	var reviewer ResultProcessor = result.NewReviewer()
 	out.WriteProgressBlank()

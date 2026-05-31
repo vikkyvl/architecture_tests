@@ -19,6 +19,8 @@ external:
       OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer ${NOTION_API_TOKEN}", "Notion-Version": "2022-06-28"}'
     search_tool: "API-post-search"
     search_arg: "query"
+    exclude:
+      - "draft"                     # skip draft pages
   - system: jira
     command: ["uvx", "mcp-atlassian"]
     env:
@@ -28,8 +30,13 @@ external:
       JIRA_PROJECTS_FILTER: "${JIRA_PROJECT_KEY}"
     search_tool: "jira_search"
     search_arg: "jql"
-    query_template: 'text ~ "%s"'
+    query_template: 'text ~ "%s" AND project = %s'  # %s[0]=query, %s[1]=project_filter
+    project_filter: "${JIRA_PROJECT_KEY}"            # reuses the existing JIRA_PROJECT_KEY from .env
     default_query: "audit transactions payment"
+    include:
+      - "audit"
+      - "security"
+      - "transaction"
   - system: youtrack
     command: ["npx", "-y", "@vitalyostanin/youtrack-mcp"]
     env:
@@ -37,7 +44,43 @@ external:
       YOUTRACK_TOKEN: "${YOUTRACK_TOKEN}"
     search_tool: "issues_search"
     search_arg: "query"
-    default_query: "transaction"
+    default_query: "project: ${YOUTRACK_PROJECT_KEY}"
+
+architecture:
+  style: "hexagonal"
+  description: "Ports and Adapters — domain core is isolated from all frameworks and infrastructure concerns"
+  invariants:
+    - id: "ports_in_domain"
+      description: "Repository and service interfaces (ports) must be defined in Domain layer, not Infrastructure"
+      severity: "critical"
+      applies_to: ["Domain"]
+    - id: "no_framework_in_domain"
+      description: "Domain classes must not import framework, ORM, or persistence annotations (PDO, Doctrine, Hibernate)"
+      severity: "critical"
+      applies_to: ["Domain"]
+    - id: "adapters_implement_ports"
+      description: "Infrastructure classes must implement domain interfaces; Application must never instantiate Infrastructure classes directly"
+      severity: "high"
+
+design_principles:
+  - id: "srp"
+    description: "Each class must have a single responsibility. PaymentService must not mix persistence, business logic, balance updates, and logging in one method."
+    severity: "high"
+    applies_to: ["Application"]
+
+  - id: "dip"
+    description: "High-level modules (Application) must depend on domain abstractions (interfaces), not on concrete Infrastructure classes. Use PaymentRepositoryInterface, not PaymentRepository directly."
+    severity: "critical"
+    applies_to: ["Application"]
+
+  - id: "low_coupling"
+    description: "Classes must not directly depend on both PDO and domain entities simultaneously; infrastructure concerns must be isolated behind interfaces."
+    severity: "high"
+
+  - id: "dry"
+    description: "Balance update SQL must not be duplicated between processPayment and refundPayment; extract to a shared private method or repository method."
+    severity: "medium"
+    applies_to: ["Application"]
 
 domain_context:
   domain: "FinTech"
