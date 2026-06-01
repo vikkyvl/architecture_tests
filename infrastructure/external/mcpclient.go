@@ -78,8 +78,8 @@ func (c *MCPClient) start() error {
 	c.scanner.Buffer(make([]byte, 0, 64*1024), mcpScannerMaxBytes)
 
 	if err := c.initialize(); err != nil {
-		c.stdin.Close()
-		c.cmd.Process.Kill()
+		_ = c.stdin.Close()
+		_ = c.cmd.Process.Kill()
 		return apperrors.Wrap(apperrors.KindExternalService, mcpOperation, c.withStderrTail(fmt.Sprintf(errMCPInit, c.cfg.System)), err)
 	}
 	if tools, err := c.listTools(); err == nil {

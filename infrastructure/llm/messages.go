@@ -61,7 +61,7 @@ type textContentBlockJSON struct {
 	Text string `json:"text"`
 }
 
-func (b ContentBlock) MarshalJSON() ([]byte, error) {
+func (b *ContentBlock) MarshalJSON() ([]byte, error) {
 	switch b.Type {
 	case c.ContentTypeToolUse:
 		return json.Marshal(toolUseContentBlockJSON{

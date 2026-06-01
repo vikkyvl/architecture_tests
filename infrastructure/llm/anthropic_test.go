@@ -246,7 +246,7 @@ func TestContentBlockMarshalIncludesCacheControl(t *testing.T) {
 		Content:      "x",
 		CacheControl: &CacheControl{Type: c.CacheControlEphemeral},
 	}
-	data, err := json.Marshal(block)
+	data, err := json.Marshal(&block)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestContentBlockMarshalOmitsCacheControlWhenNil(t *testing.T) {
 		ToolUseID: "tu1",
 		Content:   "x",
 	}
-	data, err := json.Marshal(block)
+	data, err := json.Marshal(&block)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

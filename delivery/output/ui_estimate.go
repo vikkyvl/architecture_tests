@@ -37,7 +37,6 @@ const (
 	labelOptionSplit     = "Option B — split across %d runs (keep --max-tool-calls=%d):"
 )
 
-// RunPlanOpts carries the CLI options needed to reconstruct analyze commands.
 type RunPlanOpts struct {
 	ProjectPath string
 	RulesPath   string
@@ -127,13 +126,11 @@ func RenderEstimateRunPlan(r *models.EstimateResult, opts RunPlanOpts) string {
 	var rows []string
 
 	if r.RunsNeeded > 1 {
-		// Option A: single run with bumped budget
 		singleCmd := buildCmd(r.SuggestedMaxToolCalls)
 		rows = append(rows, sectionStyle.Render(fmt.Sprintf(labelOptionSingleRun, r.SuggestedMaxToolCalls)))
 		rows = append(rows, mutedStyle.Render(singleCmd))
 		rows = append(rows, "")
 
-		// Option B: split runs with current budget
 		baseCmd := buildCmd(r.MaxToolCalls)
 		resumeCmd := baseCmd + fmt.Sprintf(fmtCmdResume, outputJSON)
 		rows = append(rows, sectionStyle.Render(fmt.Sprintf(labelOptionSplit, r.RunsNeeded, r.MaxToolCalls)))

@@ -125,9 +125,9 @@ func (c *MCPClient) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stdin != nil {
-		c.stdin.Close()
+		_ = c.stdin.Close()
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
-		c.cmd.Wait()
+		_ = c.cmd.Wait()
 	}
 }

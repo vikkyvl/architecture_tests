@@ -20,11 +20,11 @@ func LoadEnv(path string) {
 	file, err := os.Open(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, warnEnvOpen, path, err)
+			_, _ = fmt.Fprintf(os.Stderr, warnEnvOpen, path, err)
 		}
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	s := bufio.NewScanner(file)
 	for s.Scan() {
@@ -39,11 +39,11 @@ func LoadEnv(path string) {
 		key := strings.TrimSpace(parts[0])
 		val := trimQuotePair(strings.TrimSpace(parts[1]))
 		if os.Getenv(key) == "" {
-			os.Setenv(key, val)
+			_ = os.Setenv(key, val)
 		}
 	}
 	if err := s.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, warnEnvScan, path, err)
+		_, _ = fmt.Fprintf(os.Stderr, warnEnvScan, path, err)
 	}
 }
 

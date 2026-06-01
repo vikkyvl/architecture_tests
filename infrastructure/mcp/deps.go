@@ -18,7 +18,7 @@ const extractDepsParseTimeout = 10 * time.Second
 func (r *Resolver) extractDeps(source, lang string) (deps []map[string]string) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			fmt.Fprintf(os.Stderr, warnExtractDepsRecovered, lang, rec)
+			_, _ = fmt.Fprintf(os.Stderr, warnExtractDepsRecovered, lang, rec)
 			deps = nil
 		}
 	}()

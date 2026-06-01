@@ -12,17 +12,10 @@ import (
 	c "github.com/archguard/project/shared/constants"
 )
 
-type fileEntry struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	Extension string `json:"extension"`
-	Size      int64  `json:"size"`
-}
-
 func (r *Resolver) walkProjectFiles(fn func(rel string, info os.FileInfo)) {
 	err := filepath.Walk(r.projectPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			fmt.Fprintf(os.Stderr, warnSkipInaccessiblePath, err)
+			_, _ = fmt.Fprintf(os.Stderr, warnSkipInaccessiblePath, err)
 			return nil
 		}
 		if info.IsDir() {
@@ -38,7 +31,7 @@ func (r *Resolver) walkProjectFiles(fn func(rel string, info os.FileInfo)) {
 		}
 		rel, err := filepath.Rel(r.projectPath, path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, warnSkipInaccessiblePath, err)
+			_, _ = fmt.Fprintf(os.Stderr, warnSkipInaccessiblePath, err)
 			return nil
 		}
 		if c.IsSensitivePath(rel) {
@@ -118,7 +111,7 @@ func (r *Resolver) readFile(relPath string) (string, bool, error) {
 	lines := strings.Split(string(data), lineSeparator)
 	var sb strings.Builder
 	for i, line := range lines {
-		fmt.Fprintf(&sb, lineNumberFormat, i+1, line)
+		_, _ = fmt.Fprintf(&sb, lineNumberFormat, i+1, line)
 	}
 	if truncationSuffix != "" {
 		sb.WriteString(truncationSuffix)
@@ -180,15 +173,6 @@ func (r *Resolver) resolveFile(classOrPath string) (string, error) {
 		}
 	}
 	return "", apperrors.NotFound(fmt.Sprintf(errFileNotFound, classOrPath))
-}
-
-func newFileEntry(rel string, info os.FileInfo) fileEntry {
-	return fileEntry{
-		Path:      rel,
-		Name:      info.Name(),
-		Extension: strings.TrimPrefix(filepath.Ext(info.Name()), hiddenPathPrefix),
-		Size:      info.Size(),
-	}
 }
 
 func cleanProjectPath(relPath string) (string, error) {

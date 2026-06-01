@@ -1,5 +1,8 @@
 # 🏛️ ArchGuard Analyzer
 
+![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Go](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)
+
 > **AI-powered architectural analyzer for layered applications.**  
 > Finds violations in layer dependencies, domain rules, and design principles — using your LLM as the reasoning engine.  
 > 🔒 **Source code never leaves your machine** — the LLM reads only what it explicitly asks for, through a controlled consent layer.
@@ -10,7 +13,7 @@
 
 - 🗂️ **Layer dependency checks** — Domain must not depend on Infrastructure, etc.
 - 📜 **Domain-specific rules** — custom semantic rules defined in plain YAML
-- 🌐 **Multi-language** — PHP, TypeScript, Python, Java, C#, Go, JavaScript (auto-detected)
+- 🌐 **Multi-language** — PHP, TypeScript, JavaScript, Python, Java, C#, Go, Ruby, Kotlin, Swift, Rust, C, C++, Scala, Lua, Bash, Elixir, HCL, SQL (auto-detected)
 - 🤖 **Three LLM providers** — Anthropic Claude, Google Gemini, OpenAI GPT
 - 🔐 **Consent system** — interactive prompts before reading any file; decisions persist per session or project
 - 📋 **Audit log** — every tool call, decision, and token count recorded in the report
@@ -26,8 +29,75 @@
 |---|---|---|
 | **Go** | 1.24+ | `go version` |
 | **C compiler** (clang or gcc) | any recent | `clang --version` — needed for tree-sitter language detection |
-| **Node.js** (optional) | 18+ | needed only for Notion / YouTrack MCP servers |
-| **Python / uv** (optional) | — | needed only for Jira MCP server via `uvx` |
+| **Node.js** *(optional)* | 18+ | `node --version` — needed only for Notion / YouTrack MCP servers |
+| **Python + uv** *(optional)* | Python 3.9+, uv any | `uv --version` — needed only for Jira MCP server via `uvx` |
+
+### Install Go
+
+**macOS (Homebrew):**
+```bash
+brew install go
+```
+
+**Linux:**
+```bash
+wget https://go.dev/dl/go1.24.2.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.24.2.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Windows:** download the installer from [go.dev/dl](https://go.dev/dl/).
+
+Verify: `go version` → should print `go1.24` or higher.
+
+### Install C compiler (required for tree-sitter)
+
+**macOS:** ships with Apple Clang via Xcode Command Line Tools:
+```bash
+xcode-select --install
+```
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt-get install -y build-essential
+```
+
+**Linux (Fedora/RHEL):**
+```bash
+sudo dnf install -y gcc
+```
+
+**Windows:** install [MSYS2](https://www.msys2.org/) and run `pacman -S mingw-w64-ucrt-x86_64-gcc`.
+
+Verify: `clang --version` or `gcc --version`.
+
+### Install Node.js *(optional — Notion / YouTrack only)*
+
+**macOS:**
+```bash
+brew install node
+```
+
+**Linux / Windows:** download the LTS installer from [nodejs.org](https://nodejs.org/).
+
+Verify: `node --version` → should print `v18` or higher.
+
+### Install Python + uv *(optional — Jira only)*
+
+**macOS / Linux:**
+```bash
+brew install uv          # macOS
+# or
+curl -LsSf https://astral.sh/uv/install.sh | sh   # Linux / macOS
+```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Verify: `uv --version`.
 
 ---
 
@@ -112,20 +182,6 @@ ArchGuard has two commands: **`estimate`** (plan before spending tokens) and **`
 
 - **Yes** → launches `analyze` immediately
 - **No** → prints a ready-to-copy run plan with the exact commands to execute (including `--resume` chains for multi-run projects)
-
-```
-╭──────────────────────────────────────────────────────────────────────────────╮
-│  Estimate                                                                    │
-│                                                                              │
-│  Project         dddsample-core (java)                                       │
-│  Files           146                                                         │
-│  Est. tool calls 308                                                         │
-│  By layer        Domain          42 files  ~88 calls                        │
-│                  Application     18 files  ~38 calls                        │
-│                  Infrastructure  31 files  ~65 calls                        │
-│  Runs needed     4  (use --resume between runs; --max-tool-calls=100 each)  │
-╰──────────────────────────────────────────────────────────────────────────────╯
-```
 
 > The estimated call count scales with the number of **domain rules** in your config: each domain rule requires reading relevant file contents (not just imports), so more rules → more `read_file` calls → higher estimate.
 
@@ -227,7 +283,7 @@ rules:
 ```yaml
 project:
   name: "payment-service"
-  language: java          # php | typescript | python | java | csharp | go | javascript
+  language: java          # php | typescript | javascript | python | java | csharp | go | ruby | kotlin | swift | rust | c | cpp | scala | lua | bash | elixir | hcl | sql
   src_root: "src/main/java"
   exclude:                # glob patterns — matched files are hidden from the LLM
     - "src/test/**"
@@ -303,39 +359,49 @@ ArchGuard automatically paces requests to stay within each provider's quota:
 
 > ⚠️ Gemini's free tier is 15 RPM. If you have a paid key, you can set a shorter `provider_retry_wait` in `runtime:`.
 
-### Model overrides (cheaper / faster)
+### Available models
+
+**Anthropic** ([full list](https://docs.anthropic.com/en/docs/about-claude/models))
+
+| Model |
+|-------|
+| `claude-opus-4-7` *(default)* |
+| `claude-opus-4-5` |
+| `claude-sonnet-4-5` |
+| `claude-haiku-4-5` |
+
+**Google Gemini** ([full list](https://ai.google.dev/gemini-api/docs/models))
+
+| Model |
+|-------|
+| `gemini-2.5-flash` *(default)* |
+| `gemini-2.5-pro` |
+| `gemini-2.0-flash` |
+
+**OpenAI** ([full list](https://platform.openai.com/docs/models))
+
+| Model |
+|-------|
+| `gpt-4o` *(default)* |
+| `gpt-4o-mini` |
+| `o3` |
+| `o4-mini` |
+
+> ⚠️ OpenAI reasoning models (`o1`, `o3`, `o4-mini`, `gpt-5`…) use `max_completion_tokens` instead of `max_tokens` — ArchGuard detects this automatically.
+
+### Model override examples
 
 ```bash
-# Anthropic — cheaper haiku model
 ./archguard analyze -r archguard.yaml --provider anthropic --model claude-haiku-4-5
-
-# OpenAI — cheaper mini model
-./archguard analyze -r archguard.yaml --provider openai --model gpt-4o-mini
-
-# Gemini — faster flash model
-./archguard analyze -r archguard.yaml --provider gemini --model gemini-2.0-flash
+./archguard analyze -r archguard.yaml --provider openai    --model gpt-4o-mini
+./archguard analyze -r archguard.yaml --provider gemini    --model gemini-2.5-pro
 ```
 
 ---
 
 ## 🔐 Consent System
 
-When the LLM wants to read a source file or query an external system, ArchGuard shows an interactive prompt:
-
-```
-╭──────────────────────────────────────────────────────────────────────────────╮
-│ Consent required                                                             │
-│                                                                              │
-│ Tool         read_file                                                       │
-│ path         src/Infrastructure/Persistence/PaymentRepository.php           │
-│ Budget       87 calls remaining                                              │
-│                                                                              │
-│ > [a] Allow once     Only this call                                          │
-│   [s] Allow session  All reads until analysis ends                          │
-│   [p] Always allow   Save pattern to consent.yaml                           │
-│   [d] Deny           Return denied result to the LLM                        │
-╰──────────────────────────────────────────────────────────────────────────────╯
-```
+When the LLM wants to read a source file or query an external system, ArchGuard shows an interactive prompt with four options: **Allow once**, **Allow session**, **Always allow** (saves to `consent.yaml`), or **Deny**.
 
 ### Pre-approving patterns
 
@@ -529,7 +595,7 @@ After analysis, two files are written (default: `report.json` and `report.md`).
       "file": "src/Domain/Model/Order.php",
       "line": 5,
       "severity": "critical",
-      "category": "structural",
+      "category": "layer_dependency",
       "rule": "domain_persistence_isolation",
       "description": "Domain class imports Doctrine ORM — persistence concern in domain layer.",
       "suggestion": "Move persistence annotations to Infrastructure; keep Domain as plain objects."

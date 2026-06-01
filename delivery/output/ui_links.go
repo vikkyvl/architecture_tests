@@ -24,10 +24,7 @@ func insertFileLink(panel, path string) string {
 	if uri == "" {
 		return panel
 	}
-	// ANSI styling wraps the OSC 8 sequence from the outside; the link text
-	// itself is plain. Embedding ANSI reset codes inside an OSC 8 sequence
-	// causes some terminal emulators (including certain GoLand versions) to
-	// drop the hyperlink, making the path non-clickable.
+
 	osc8 := fmt.Sprintf(formatHyperlink, uri, path)
 	linked := fmt.Sprintf(formatStyledLink, osc8)
 	return strings.Replace(panel, path, linked, 1)

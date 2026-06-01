@@ -39,8 +39,8 @@ type ResolverConfig struct {
 	Rules              []config.RuleConfig
 	DomainContext      config.DomainContextConfig
 	KeepWindowTurns    int
-	InitialViolations  []models.Violation // pre-loaded from a previous run
-	PreviouslyAnalyzed []string           // files read in a previous run; return stub instead of content
+	InitialViolations  []models.Violation
+	PreviouslyAnalyzed []string
 }
 
 type readFileEntry struct {
@@ -76,7 +76,7 @@ type Resolver struct {
 	readFilesMu        sync.Mutex
 	readTurn           int
 	keepWindowTurns    int
-	previouslyAnalyzed map[string]bool // files from a prior run; immutable after construction
+	previouslyAnalyzed map[string]bool
 	observer           Observer
 }
 
@@ -124,6 +124,12 @@ func (r *Resolver) ListTools() []models.ToolDefinition {
 }
 
 func (r *Resolver) ExecuteTool(toolName string, args map[string]interface{}, budget int) (string, error) {
+	if toolName == c.ToolGetDocumentation && r.docsPath == "" {
+		result, dedup, err := r.dispatch(toolName, args)
+		r.auditLog.Record(toolName, fmtArgs(args), c.DecisionAutoApproved, len(result), err, dedup)
+		return result, err
+	}
+
 	decision := r.consent.Check(toolName, args, budget)
 	if decision == c.DecisionBlocked || decision == c.DecisionUserDenied {
 		r.auditLog.Record(toolName, fmtArgs(args), decision, 0, nil, false)

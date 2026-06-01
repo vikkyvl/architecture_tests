@@ -18,7 +18,7 @@ func AnimateProactivePauseWait(out io.Writer, wait time.Duration) {
 
 func animateWait(out io.Writer, wait time.Duration, frameFn func(time.Duration, string) string, doneFn func(time.Duration) string) {
 	if wait <= 0 {
-		fmt.Fprintln(out, doneFn(wait))
+		_, _ = fmt.Fprintln(out, doneFn(wait))
 		return
 	}
 
@@ -33,17 +33,17 @@ func animateWait(out io.Writer, wait time.Duration, frameFn func(time.Duration, 
 		if remaining <= 0 {
 			break
 		}
-		fmt.Fprint(out, terminalClearLine)
-		fmt.Fprint(out, frameFn(remaining, string(rateLimitFrames[frame%len(rateLimitFrames)])))
+		_, _ = fmt.Fprint(out, terminalClearLine)
+		_, _ = fmt.Fprint(out, frameFn(remaining, string(rateLimitFrames[frame%len(rateLimitFrames)])))
 		select {
 		case <-timer.C:
-			fmt.Fprint(out, terminalClearLine)
-			fmt.Fprintln(out, doneFn(wait))
+			_, _ = fmt.Fprint(out, terminalClearLine)
+			_, _ = fmt.Fprintln(out, doneFn(wait))
 			return
 		case <-ticker.C:
 		}
 	}
 
-	fmt.Fprint(out, terminalClearLine)
-	fmt.Fprintln(out, doneFn(wait))
+	_, _ = fmt.Fprint(out, terminalClearLine)
+	_, _ = fmt.Fprintln(out, doneFn(wait))
 }

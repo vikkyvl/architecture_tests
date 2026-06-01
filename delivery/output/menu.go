@@ -136,16 +136,13 @@ func (m yesNoModel) View() string {
 	return yesNoPanelStyle.Render(strings.Join(lines, yesNoLineBreak)) + yesNoLineBreak
 }
 
-// MenuOption is a selectable item in AskChoice.
 type MenuOption struct {
 	Key     string
 	Label   string
 	Hint    string
-	Default bool // if true, cursor starts on this option
+	Default bool
 }
 
-// AskChoice shows an interactive menu and returns the key of the chosen option.
-// The last option is used as the cancel/Esc fallback.
 func AskChoice(title string, rows []string, options []MenuOption) string {
 	if len(options) == 0 {
 		return ""

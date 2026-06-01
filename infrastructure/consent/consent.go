@@ -84,7 +84,7 @@ func (m *Manager) Check(toolName string, args map[string]interface{}, budget int
 	defer m.mu.Unlock()
 
 	if blocked, value := m.isBlockedCall(toolName, args); blocked {
-		fmt.Fprint(m.writer(), renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgBlockedTool, toolName, value))))
+		_, _ = fmt.Fprint(m.writer(), renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgBlockedTool, toolName, value))))
 		return c.DecisionBlocked
 	}
 
@@ -109,7 +109,7 @@ func (m *Manager) Check(toolName string, args map[string]interface{}, budget int
 	}
 
 	if !m.interactive {
-		fmt.Fprint(m.writer(), renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgNonInteractiveDeny, toolName))))
+		_, _ = fmt.Fprint(m.writer(), renderStatus(consentDangerStyle.Render(fmt.Sprintf(msgNonInteractiveDeny, toolName))))
 		return c.DecisionUserDenied
 	}
 
@@ -132,7 +132,7 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 	}
 	rows = append(rows, renderConsentKV(msgConsentBudget, fmt.Sprintf(msgCallsRemaining, budget)))
 
-	fmt.Fprintln(m.writer())
+	_, _ = fmt.Fprintln(m.writer())
 	choice := runConsentMenu(rows, m.writer())
 
 	switch choice {
@@ -152,7 +152,7 @@ func (m *Manager) prompt(toolName string, args map[string]interface{}, budget in
 		}
 		m.projectAllowed = append(m.projectAllowed, rule)
 		if err := saveRules(filepath.Join(m.projectPath, projectConsentPath), m.projectAllowed); err != nil {
-			fmt.Fprintf(m.writer(), msgConsentSaveFailed, err)
+			_, _ = fmt.Fprintf(m.writer(), msgConsentSaveFailed, err)
 		}
 		return c.DecisionProjectAllow
 	case choiceDeny:
@@ -171,7 +171,7 @@ func (m *Manager) confirmDefaultPattern(toolName string, args map[string]interfa
 		"",
 		consentHelpStyle.Render(patternMenuFooterHint),
 	}
-	fmt.Fprintln(m.writer())
+	_, _ = fmt.Fprintln(m.writer())
 	return runPatternConfirmMenu(rows, m.writer()) == choicePatternYes
 }
 

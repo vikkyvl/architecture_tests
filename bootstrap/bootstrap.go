@@ -49,7 +49,7 @@ type Options struct {
 	MaxToolCalls int
 	Timeout      time.Duration
 	Interactive  bool
-	ResumePath   string // path to a previous report.json to continue from
+	ResumePath   string
 }
 
 type App struct {
@@ -124,7 +124,7 @@ func NewApp(opts Options, out *output.OutputTransport, obs review.Observer) (*Ap
 			InitialViolations:  prevViolations,
 			PreviouslyAnalyzed: prevAnalyzed,
 		},
-		consentMgr, auditLog, externals,
+		consentMgr, auditLog, externals, obs,
 	)
 
 	llmOpts := llm.RuntimeOptions{
@@ -257,7 +257,7 @@ func (a *App) Run() error {
 	a.out.WriteProgress(output.RenderHeader(headerReports))
 	a.out.WriteProgress(output.RenderReportPaths(a.opts.OutputJSON, a.opts.OutputMD))
 
-	if run != nil && run.Incomplete {
+	if run.Incomplete {
 		a.out.WriteProgress(output.RenderResumeHint(output.RunPlanOpts{
 			ProjectPath: a.opts.ProjectPath,
 			RulesPath:   a.opts.RulesPath,

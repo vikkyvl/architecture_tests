@@ -153,7 +153,7 @@ func runMenu(rows []string, options []consentOption, cancelKey, helpHint string,
 		return cancelKey
 	}
 	if final.choice == choiceInterrupt {
-		syscall.Kill(os.Getpid(), syscall.SIGINT) //nolint:errcheck
+		_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
 		return cancelKey
 	}
 	return final.choice
@@ -161,7 +161,6 @@ func runMenu(rows []string, options []consentOption, cancelKey, helpHint string,
 
 func drainStdin() {
 	buf := make([]byte, 256)
-	// Put stdin in non-blocking mode, read whatever is buffered, restore.
 	fd := int(os.Stdin.Fd())
 	if err := syscall.SetNonblock(fd, true); err != nil {
 		return
@@ -172,7 +171,7 @@ func drainStdin() {
 			break
 		}
 	}
-	syscall.SetNonblock(fd, false) //nolint:errcheck
+	_ = syscall.SetNonblock(fd, false)
 }
 
 func (m consentChoiceModel) Init() tea.Cmd {
@@ -237,12 +236,12 @@ func (m consentChoiceModel) View() string {
 }
 
 func fallbackMenuChoice(rows []string, options []consentOption, defaultKey string, out io.Writer) string {
-	fmt.Fprintln(out, consentPanelStyle.Render(strings.Join(rows, consentLineBreak)))
+	_, _ = fmt.Fprintln(out, consentPanelStyle.Render(strings.Join(rows, consentLineBreak)))
 	var keys []string
 	for _, opt := range options {
 		keys = append(keys, fmt.Sprintf(consentFormatChoice, opt.key, opt.label))
 	}
-	fmt.Fprint(out, consentChoiceStyle.Render(strings.Join(keys, consentOptionGap)+consentPromptSuffix))
+	_, _ = fmt.Fprint(out, consentChoiceStyle.Render(strings.Join(keys, consentOptionGap)+consentPromptSuffix))
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
 	choice := strings.TrimSpace(strings.ToLower(input))

@@ -149,7 +149,7 @@ func (c *Client) Post(cfg RequestConfig) (*Response, error) {
 			return nil, apperrors.Wrap(apperrors.KindExternalService, operationHTTPRequest, errRequestFailed, err)
 		}
 		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if readErr != nil {
 			return nil, apperrors.Wrap(apperrors.KindExternalService, operationHTTPResp, errReadResponseBody, readErr)
 		}

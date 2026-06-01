@@ -16,9 +16,9 @@ const (
 	estimateOverhead        = 2
 	estimateClassDeps       = 1.0
 	estimateViolations      = 0.1
-	estimateReadFileBase    = 0.1  // structural ambiguity, no domain rules
-	estimateReadFilePerRule = 0.15 // each domain rule adds ~15% file coverage
-	estimateReadFileCap     = 1.0  // cannot exceed one read per file
+	estimateReadFileBase    = 0.1
+	estimateReadFilePerRule = 0.15
+	estimateReadFileCap     = 1.0
 )
 
 type EstimateOptions struct {
@@ -46,7 +46,7 @@ func Estimate(opts EstimateOptions) (*models.EstimateResult, error) {
 
 	var totalFiles, unknownFiles int
 
-	filepath.Walk(opts.ProjectPath, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(opts.ProjectPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

@@ -19,11 +19,8 @@ const (
 	AnthropicMaxRetries = 5
 	AnthropicRetryWait  = 20 * time.Second
 
-	// Tier-1 Build: 50 RPM, 200 K TPM (claude-opus-4+).
-	// TPM is used as the context-pruning soft-limit denominator; RPM drives the
-	// minimum inter-request interval so we never burst past the quota ceiling.
 	AnthropicRPM             = 50
-	AnthropicMinInterval     = 1200 * time.Millisecond // 60 s / 50 RPM
+	AnthropicMinInterval     = 1200 * time.Millisecond
 	AnthropicInputTPM        = 40000
 	AnthropicMaxOutputTokens = 8192
 )
@@ -31,17 +28,13 @@ const (
 const (
 	GeminiBaseURL    = "https://generativelanguage.googleapis.com/v1beta/models"
 	GeminiModel      = "gemini-2.5-flash"
-	GeminiTimeout    = 180 * time.Second // Flash thinking can be slow
+	GeminiTimeout    = 180 * time.Second
 	GeminiMaxRetries = 5
-	GeminiRetryWait  = 30 * time.Second // Gemini quota resets are typically 60 s windows
+	GeminiRetryWait  = 30 * time.Second
 
-	// Free tier: 15 RPM, 1 M TPM.  Paid: 2 000 RPM, 4 M TPM.
-	// We use the free-tier RPM as a conservative floor so the app works out-of-the-box
-	// on any key.  Gemini does not expose remaining-quota response headers, so the
-	// RPM-based interval is the only proactive pacing signal we have.
 	GeminiRPM             = 15
-	GeminiMinInterval     = 4 * time.Second // 60 s / 15 RPM
-	GeminiInputTPM        = 250000          // paid tier; avoids over-pruning large contexts
+	GeminiMinInterval     = 4 * time.Second
+	GeminiInputTPM        = 250000
 	GeminiMaxOutputTokens = 8192
 )
 
@@ -52,13 +45,8 @@ const (
 	OpenAIMaxRetries = 5
 	OpenAIRetryWait  = 15 * time.Second
 
-	// Tier-1: 500 RPM, 200 K TPM (gpt-4o).
-	// InputTPM is intentionally set to 30 K (not the full 200 K quota) so that
-	// the 2/3 soft-limit (~20 K) triggers context pruning at a reasonable size.
-	// Without this cap, gpt-4o accumulates 100 K+ contexts that cost full price
-	// on every turn (no automatic caching below the 1 K prefix threshold).
 	OpenAIRPM             = 500
-	OpenAIMinInterval     = 120 * time.Millisecond // 60 s / 500 RPM
+	OpenAIMinInterval     = 120 * time.Millisecond
 	OpenAIInputTPM        = 30000
 	OpenAIMaxOutputTokens = 4096
 )
@@ -80,9 +68,6 @@ const (
 	EnvOpenAIKey    = "OPENAI_API_KEY"
 )
 
-// OpenAIReasoningPrefixes lists OpenAI model-name prefixes whose Chat
-// Completions endpoint rejects `max_tokens` and requires
-// `max_completion_tokens` instead. Expand on demand.
 var OpenAIReasoningPrefixes = []string{"o1", "o3", "o4", "gpt-5"}
 
 func IsOpenAIReasoningModel(name string) bool {

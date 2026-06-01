@@ -2,10 +2,8 @@ package detector
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,15 +13,13 @@ import (
 )
 
 const (
-	detectedLanguageFormat = "  Detected language: %s\n"
-	detectedFileFormat     = "    %s: %d files (confidence %.0f%%)\n"
-	detectorTimeout        = 30 * time.Second
-	detectorMaxFileBytes   = 10 * 1024 * 1024
-	detectorAcceptScore    = 0.99
-	fallbackConfidence     = 0.5
-	emptyTreeScore         = 0.0
-	smallFileBytes         = 200
-	minNamedNodesToTrust   = 5
+	detectorTimeout      = 30 * time.Second
+	detectorMaxFileBytes = 10 * 1024 * 1024
+	detectorAcceptScore  = 0.99
+	fallbackConfidence   = 0.5
+	emptyTreeScore       = 0.0
+	smallFileBytes       = 200
+	minNamedNodesToTrust = 5
 )
 
 type DetectResult struct {
@@ -39,7 +35,7 @@ func Detect(root string) DetectResult {
 	langCounts := make(map[string]int)
 	langScores := make(map[string][]float64)
 
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -134,7 +130,7 @@ func betterFit(candidate, current grammarFit) bool {
 		return true
 	case !candidatePass && currentPass:
 		return false
-	case candidatePass && currentPass:
+	case candidatePass:
 		return candidate.named > current.named
 	default:
 		return candidate.score > current.score
@@ -208,25 +204,6 @@ func pickPrimary(counts map[string]int) string {
 		}
 	}
 	return best
-}
-
-func PrintResult(r DetectResult) {
-	fmt.Fprintf(os.Stderr, detectedLanguageFormat, r.PrimaryLanguage)
-	type lc struct {
-		l    string
-		n    int
-		conf float64
-	}
-	var sorted []lc
-	for l, n := range r.FileCounts {
-		sorted = append(sorted, lc{l, n, r.Confidence[l]})
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].n > sorted[j].n
-	})
-	for _, s := range sorted {
-		fmt.Fprintf(os.Stderr, detectedFileFormat, s.l, s.n, s.conf*100)
-	}
 }
 
 func Extensions(language string) []string {
