@@ -1,6 +1,15 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+type ToolDefinition struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
 
 type Violation struct {
 	ID          string `json:"id"`
@@ -37,6 +46,24 @@ type Metrics struct {
 	CacheHitRatio    float64        `json:"cache_hit_ratio,omitempty"`
 	RateLimitHits    int            `json:"rate_limit_hits,omitempty"`
 	PreemptiveSleeps int            `json:"preemptive_sleeps,omitempty"`
+}
+
+type LayerEstimate struct {
+	Name      string `json:"name"`
+	FileCount int    `json:"file_count"`
+	ToolCalls int    `json:"tool_calls"`
+}
+
+type EstimateResult struct {
+	ProjectName           string          `json:"project_name"`
+	Language              string          `json:"language"`
+	TotalFiles            int             `json:"total_files"`
+	FilesByLayer          []LayerEstimate `json:"files_by_layer"`
+	UnknownFiles          int             `json:"unknown_files"`
+	EstimatedToolCalls    int             `json:"estimated_tool_calls"`
+	MaxToolCalls          int             `json:"max_tool_calls"`
+	RunsNeeded            int             `json:"runs_needed"`
+	SuggestedMaxToolCalls int             `json:"suggested_max_tool_calls"`
 }
 
 type AuditEntry struct {

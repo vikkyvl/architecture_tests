@@ -122,10 +122,14 @@ func (c *Client) WithPreemptiveSleepObserver(fn func(wait time.Duration)) *Clien
 }
 
 func rateLimitKindFromStatus(status int) string {
-	if status == constants.HTTPStatusOverloaded {
+	switch status {
+	case constants.HTTPStatusOverloaded:
 		return constants.RateLimitKindOverloaded
+	case constants.HTTPStatusUnavailable:
+		return constants.RateLimitKindUnavailable
+	default:
+		return constants.RateLimitKind429
 	}
-	return constants.RateLimitKind429
 }
 
 func (c *Client) Post(cfg RequestConfig) (*Response, error) {
@@ -145,7 +149,7 @@ func (c *Client) Post(cfg RequestConfig) (*Response, error) {
 			return nil, apperrors.Wrap(apperrors.KindExternalService, operationHTTPRequest, errRequestFailed, err)
 		}
 		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if readErr != nil {
 			return nil, apperrors.Wrap(apperrors.KindExternalService, operationHTTPResp, errReadResponseBody, readErr)
 		}
@@ -280,7 +284,9 @@ func clampPreemptive(wait, retryWait time.Duration) time.Duration {
 }
 
 func isRateLimited(status int) bool {
-	return status == http.StatusTooManyRequests || status == constants.HTTPStatusOverloaded
+	return status == http.StatusTooManyRequests ||
+		status == constants.HTTPStatusOverloaded ||
+		status == constants.HTTPStatusUnavailable
 }
 
 func (c *Client) pickRetryWait(h http.Header, attempt int) time.Duration {

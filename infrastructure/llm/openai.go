@@ -1,0 +1,317 @@
+package llm
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/archguard/project/shared/apperrors"
+	c "github.com/archguard/project/shared/constants"
+	"github.com/archguard/project/shared/httpclient"
+)
+
+const (
+	errParseOpenAI       = "failed to parse openai response"
+	openAIFinishToolCall = "tool_calls"
+	openAIRoleTool       = "tool"
+	openAITypeFunction   = "function"
+)
+
+type oRequest struct {
+	Model               string     `json:"model"`
+	MaxTokens           int        `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int        `json:"max_completion_tokens,omitempty"`
+	Store               *bool      `json:"store,omitempty"`
+	Messages            []oMessage `json:"messages"`
+	Tools               []oTool    `json:"tools,omitempty"`
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+type oMessage struct {
+	Role       string      `json:"role"`
+	Content    string      `json:"content,omitempty"`
+	ToolCalls  []oToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+}
+
+type oToolCall struct {
+	ID       string    `json:"id"`
+	Type     string    `json:"type"`
+	Function oFunction `json:"function"`
+}
+
+type oFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type oTool struct {
+	Type     string    `json:"type"`
+	Function oFuncDecl `json:"function"`
+}
+
+type oFuncDecl struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+type oResponse struct {
+	Choices []struct {
+		Message struct {
+			Role      string      `json:"role"`
+			Content   *string     `json:"content"`
+			ToolCalls []oToolCall `json:"tool_calls"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *oUsage `json:"usage,omitempty"`
+}
+
+type oUsage struct {
+	PromptTokens        int               `json:"prompt_tokens,omitempty"`
+	CompletionTokens    int               `json:"completion_tokens,omitempty"`
+	PromptTokensDetails *oPromptTokenDtls `json:"prompt_tokens_details,omitempty"`
+}
+
+type oPromptTokenDtls struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+type OpenAIClient struct {
+	apiKey                  string
+	model                   string
+	http                    *httpclient.Client
+	respectRateLimitHeaders bool
+}
+
+func NewOpenAIClient(apiKey, model string) (*OpenAIClient, error) {
+	return NewOpenAIClientWithRateLimitHook(apiKey, model, nil)
+}
+
+func NewOpenAIClientWithRateLimitHook(apiKey, model string, rateLimitHook func(time.Duration)) (*OpenAIClient, error) {
+	return NewOpenAIClientWithOptions(apiKey, model, RuntimeOptions{}, rateLimitHook)
+}
+
+var openAIRateLimitHeaders = httpclient.RateLimitHeaders{
+	RequestsRemaining: c.HeaderOpenAIRequestsRemaining,
+	TokensRemaining:   c.HeaderOpenAITokensRemaining,
+	RequestsReset:     c.HeaderOpenAIRequestsReset,
+	TokensReset:       c.HeaderOpenAITokensReset,
+	TokenThreshold:    c.TailTokenThreshold,
+}
+
+func NewOpenAIClientWithOptions(apiKey, model string, opts RuntimeOptions, rateLimitHook func(time.Duration)) (*OpenAIClient, error) {
+	cfg, err := newProviderClientConfig(
+		apiKey, model, c.EnvOpenAIKey, c.OpenAIModel,
+		c.OpenAITimeout,
+		opts.retries(c.OpenAIMaxRetries),
+		opts.retryWait(c.OpenAIRetryWait),
+		rateLimitHook,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if opts.RespectRateLimitHeaders {
+		cfg.http.EnablePreemptiveSleep(openAIRateLimitHeaders)
+	}
+	if opts.RateLimitObserver != nil {
+		cfg.http.WithRateLimitObserver(opts.RateLimitObserver)
+	}
+	if opts.PreemptiveSleepObserver != nil {
+		cfg.http.WithPreemptiveSleepObserver(opts.PreemptiveSleepObserver)
+	}
+	return &OpenAIClient{
+		apiKey:                  cfg.apiKey,
+		model:                   cfg.model,
+		http:                    cfg.http,
+		respectRateLimitHeaders: opts.RespectRateLimitHeaders,
+	}, nil
+}
+
+func (o *OpenAIClient) Name() string {
+	return c.ProviderOpenAI
+}
+
+func (o *OpenAIClient) Model() string {
+	return o.model
+}
+
+func (o *OpenAIClient) SendMessage(req Request) (*Response, error) {
+	or := o.toOpenAI(req)
+	body, err := json.Marshal(or)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.KindInternal, operationOpenAIRequest, errMarshalRequest, err)
+	}
+
+	resp, err := o.http.Post(httpclient.RequestConfig{
+		URL:  c.OpenAIBaseURL,
+		Body: body,
+		Headers: map[string]string{
+			c.HTTPHeaderContentType:   c.HTTPContentTypeJSON,
+			c.HTTPHeaderAuthorization: c.HTTPAuthBearer + o.apiKey,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, providerStatusError(c.ProviderOpenAI, resp.StatusCode, resp.Body)
+	}
+
+	var out oResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return nil, apperrors.Wrap(apperrors.KindExternalService, operationOpenAIResp, errParseOpenAI, err)
+	}
+	return o.fromOpenAI(out), nil
+}
+
+func (o *OpenAIClient) toOpenAI(req Request) oRequest {
+	or := oRequest{
+		Model: o.model,
+		Store: boolPtr(false),
+	}
+	if c.IsOpenAIReasoningModel(o.model) {
+		or.MaxCompletionTokens = req.MaxTokens
+	} else {
+		or.MaxTokens = req.MaxTokens
+	}
+
+	if sys := SystemText(req.System); sys != "" {
+		or.Messages = append(or.Messages, oMessage{
+			Role:    c.RoleSystem,
+			Content: sys,
+		})
+	}
+
+	for _, t := range req.Tools {
+		or.Tools = append(or.Tools, oTool{
+			Type: openAITypeFunction,
+			Function: oFuncDecl{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.InputSchema,
+			},
+		})
+	}
+
+	for _, msg := range req.Messages {
+		switch msg.Role {
+		case c.RoleAssistant:
+			or.Messages = append(or.Messages, o.assistantMessage(msg))
+		default:
+			or.Messages = append(or.Messages, o.userMessages(msg)...)
+		}
+	}
+
+	return or
+}
+
+func (o *OpenAIClient) assistantMessage(msg Message) oMessage {
+	m := oMessage{
+		Role: c.RoleAssistant,
+	}
+	for _, b := range msg.Content {
+		switch b.Type {
+		case c.ContentTypeText:
+			m.Content += b.Text
+		case c.ContentTypeToolUse:
+			args := string(b.Input)
+			if args == "" {
+				args = c.EmptyJSONObject
+			}
+			m.ToolCalls = append(m.ToolCalls, oToolCall{
+				ID:   b.ID,
+				Type: openAITypeFunction,
+				Function: oFunction{
+					Name:      b.Name,
+					Arguments: args,
+				},
+			})
+		}
+	}
+	return m
+}
+
+func (o *OpenAIClient) userMessages(msg Message) []oMessage {
+	var out []oMessage
+	var textParts string
+
+	for _, b := range msg.Content {
+		switch b.Type {
+		case c.ContentTypeToolResult:
+			if textParts != "" {
+				out = append(out, oMessage{
+					Role:    c.RoleUser,
+					Content: textParts,
+				})
+				textParts = ""
+			}
+			out = append(out, oMessage{
+				Role:       openAIRoleTool,
+				ToolCallID: b.ToolUseID,
+				Content:    b.Content,
+			})
+		case c.ContentTypeText:
+			textParts += b.Text
+		}
+	}
+
+	if textParts != "" {
+		out = append(out, oMessage{
+			Role:    c.RoleUser,
+			Content: textParts,
+		})
+	}
+	return out
+}
+
+func (o *OpenAIClient) fromOpenAI(or oResponse) *Response {
+	resp := &Response{
+		Role:       c.RoleAssistant,
+		StopReason: c.StopReasonEndTurn,
+	}
+	if or.Usage != nil {
+		resp.Usage = Usage{
+			InputTokens:  or.Usage.PromptTokens,
+			OutputTokens: or.Usage.CompletionTokens,
+		}
+		if or.Usage.PromptTokensDetails != nil {
+			resp.Usage.CacheReadTokens = or.Usage.PromptTokensDetails.CachedTokens
+		}
+	}
+	if len(or.Choices) == 0 {
+		return resp
+	}
+
+	choice := or.Choices[0]
+	msg := choice.Message
+
+	if msg.Content != nil && *msg.Content != "" {
+		resp.Content = append(resp.Content, ContentBlock{
+			Type: c.ContentTypeText,
+			Text: *msg.Content,
+		})
+	}
+
+	for _, tc := range msg.ToolCalls {
+		args := json.RawMessage(tc.Function.Arguments)
+		if len(args) == 0 {
+			args = json.RawMessage(c.EmptyJSONObject)
+		}
+		resp.Content = append(resp.Content, ContentBlock{
+			Type:  c.ContentTypeToolUse,
+			ID:    tc.ID,
+			Name:  tc.Function.Name,
+			Input: args,
+		})
+	}
+
+	if choice.FinishReason == openAIFinishToolCall {
+		resp.StopReason = c.StopReasonToolUse
+	}
+
+	return resp
+}
