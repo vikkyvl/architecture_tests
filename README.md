@@ -211,7 +211,7 @@ Press **Ctrl+C** at any time to interrupt cleanly — all subprocesses (external
 | `--interactive` | — | `true` | Show consent prompts; set `false` for CI to deny all unapproved calls |
 | `--output-json` | `-j` | `report.json` | Path for the JSON report |
 | `--output-md` | `-m` | `report.md` | Path for the Markdown report |
-| `--resume` | — | — | `analyze` only: path to a **previous** `report.json` to continue from (see [Resume mode](#️-resume-mode)) |
+| `--resume` | — | — | `analyze` only: path to a **previous** `report.json` to continue from |
 
 ### Examples
 
@@ -280,53 +280,92 @@ rules:
 
 ### Full reference
 
+Every field the config parser understands is listed below. Only `project.name`, at least one `layers` entry, and the `rules` list are practically required — everything else is optional and falls back to the documented default.
+
 ```yaml
+# ───────────────────────────── project ─────────────────────────────
 project:
-  name: "payment-service"
-  language: java          # php | typescript | javascript | python | java | csharp | go | ruby | kotlin | swift | rust | c | cpp | scala | lua | bash | elixir | hcl | sql
-  src_root: "src/main/java"
-  exclude:                # glob patterns — matched files are hidden from the LLM
+  name: "payment-service"        # required — shown in the report header
+  language: java                 # optional — auto-detected from extensions if omitted.
+                                 #   php | typescript | javascript | python | java | csharp |
+                                 #   go | ruby | kotlin | swift | rust | c | cpp | scala |
+                                 #   lua | bash | elixir | hcl | sql
+  src_root: "src/main/java"      # root used for namespace → file-path resolution
+  exclude:                       # glob patterns — matched files are hidden from the LLM entirely
     - "src/test/**"
     - "target/**"
 
-layers:
-  - name: "Domain"
-    namespaces: ["se.citerus.dddsample.domain.*"]   # used for dependency mapping
-    paths: ["src/main/java/se/citerus/dddsample/domain/"]
+# ───────────────────────────── layers ──────────────────────────────
+layers:                          # logical layers; declaration order is irrelevant
+  - name: "Domain"               # referenced by rules.from / rules.to and by *.applies_to
+    namespaces:                  # import prefixes mapped to this layer (dependency analysis)
+      - "se.citerus.dddsample.domain.*"
+    paths:                       # filesystem paths mapped to this layer
+      - "src/main/java/se/citerus/dddsample/domain/"
 
-rules:
-  - from: "Domain"
-    to: "Infrastructure"
-    allow: false
+# ───────────────────────────── rules ───────────────────────────────
+rules:                           # allowed / forbidden dependencies between layers
+  - from: "Domain"               # source layer name (must match a layers[].name)
+    to: "Infrastructure"         # target layer name
+    allow: false                 # false = forbidden (a violation), true = explicitly allowed
     description: "Domain must not depend on Infrastructure"
 
-domain_context:
+# ────────────────────────── domain_context ─────────────────────────
+domain_context:                  # optional — semantic domain knowledge for the LLM
   domain: "Logistics / Cargo Tracking"
-  description: |
+  description: |                 # free-form text prepended to the system prompt
     Canonical DDD sample. Tracks ocean cargo shipments.
-    The Cargo aggregate is the central root.
-  domain_rules:
-    - id: "domain_persistence_isolation"
-      severity: critical                             # critical | high | medium | low
+  domain_rules:                  # semantic rules verified by reading file *contents*
+    - id: "domain_persistence_isolation"   # stable id, used as the violation's rule key
+      severity: critical                   # critical | high | medium | low
       description: "Domain classes must not import jakarta.persistence."
-    - id: "value_object_immutability"
-      severity: medium
-      description: "Value objects must not expose public setters."
 
-# Optional: external context sources queried BEFORE the agentic loop
-external:
-  - system: notion
-    command: ["npx", "-y", "@notionhq/notion-mcp-server"]
-    env:
-      OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer ${NOTION_API_TOKEN}", "Notion-Version": "2022-06-28"}'
-    search_tool: "API-post-search"
-    search_arg: "query"
+# ───────────────────────── design_principles ───────────────────────
+design_principles:               # optional — generic design principles (SOLID, DRY, …)
+  - id: "srp"
+    severity: high               # critical | high | medium | low
+    description: "Each class must have a single responsibility."
+    applies_to:                  # optional — restrict the principle to specific layers
+      - "Application"
 
-# Optional runtime tuning (omit to use "auto" profile defaults)
-runtime:
-  profile: auto           # auto | conservative | aggressive
-  max_file_bytes: 65536   # read_file soft cap; files larger than this are truncated
+# ───────────────────────────── architecture ────────────────────────
+architecture:                    # optional — high-level style + cross-cutting invariants
+  style: "Hexagonal (Ports & Adapters)"
+  description: "Application depends only on Domain ports."   # optional
+  invariants:                    # optional
+    - id: "ports_only"
+      severity: critical         # critical | high | medium | low
+      description: "Application must depend on interfaces, not concrete adapters."
+      applies_to:                # optional — restrict the invariant to specific layers
+        - "Application"
+
+# ───────────────────────────── external ────────────────────────────
+external:                        # optional — domain context queried BEFORE the agentic loop
+  - system: jira                 # label only: notion | jira | youtrack
+    command: ["uvx", "mcp-atlassian"]      # subprocess that speaks MCP over stdin/stdout
+    env:                         # env for the subprocess; ${VAR} is expanded from .env
+      JIRA_URL: "${JIRA_URL}"
+    search_tool: "jira_search"   # MCP tool name to invoke
+    search_arg: "jql"            # name of the argument that carries the query string
+    query_template: 'text ~ "%s"'         # optional — %s is replaced by the derived query
+    project_filter: "PROJ,OPS"            # optional — restrict results to these projects
+    default_query: "architecture payment audit"   # optional — used when no query is derived
+    include: ["*.md"]            # optional — glob allow-list for returned documents
+    exclude: ["archive/**"]      # optional — glob deny-list for returned documents
+
+# ───────────────────────────── runtime ─────────────────────────────
+runtime:                         # optional — quota / pacing tuning (omit to use "auto")
+  profile: auto                  # auto | conservative | aggressive (sets the defaults below)
+  max_file_bytes: 65536          # read_file soft cap (default 65536); larger files truncated
+  prune_after_turns: 10          # begin pruning old tool results after N LLM turns
+  keep_recent_turns: 4           # always keep the last N turns un-pruned
+  provider_max_retries: 5        # retries on transient LLM errors
+  provider_retry_wait: 20s       # base wait between retries (Go duration: 500ms, 30s, 2m…)
+  anthropic_cache_tail: true     # place an Anthropic prompt-cache breakpoint at the tail
+  respect_rate_limit_headers: true  # preemptively sleep when quota headers are near-empty
 ```
+
+> Any individual `runtime` field you set **overrides just that field** of the chosen `profile`; everything you leave out keeps the profile's preset value. See the **Runtime Profiles** section below for the per-profile presets.
 
 ### Severity levels
 
@@ -608,7 +647,7 @@ After analysis, two files are written (default: `report.json` and `report.md`).
   },
   "analyzed_modules": ["src/Domain/Model/Order.php"],
   "skipped_modules": [],
-  "audit_log": [...]
+  "audit_log": []
 }
 ```
 
@@ -636,32 +675,24 @@ After analysis, two files are written (default: `report.json` and `report.md`).
 - **Suggestion:** Move persistence annotations to Infrastructure; keep Domain as plain objects.
 ```
 
-### Useful fields for CI integration
+### View the report in your browser
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `incomplete` | bool | `true` if the run hit `--max-tool-calls` or `--timeout` |
-| `metrics.total_violations` | int | Use this as a CI gate |
-| `skipped_modules` | []string | Files not analyzed in this run (feed to `--resume` next time) |
-| `metrics.cache_hit_ratio` | float | Anthropic/OpenAI prompt cache efficiency (0–1) |
-
----
-
-## 🧪 Development
+A small local viewer renders `report.md` as a styled dashboard — severity badges, colored violation cards, audit log, and the analyzed-module checklist — and **live-reloads** whenever you re-run the analysis.
 
 ```bash
-# Run all tests
-go test ./...
-
-# Run tests with race detector
-go test -race ./...
-
-# Run against the bundled DDD sample (Java)
-./archguard analyze \
-  -p ./testdata/dddsample-core \
-  -r ./testdata/dddsample-core/archguard.yaml \
-  --provider anthropic
-
-# Lint & vet
-go vet ./...
+# Renders report.md at http://localhost:8765 and opens your browser
+node tools/mdserve/server.js
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-f`, `--file` | `report.md` | Markdown file to render |
+| `-p`, `--port` | `8765` | Port to listen on |
+| `--no-open` | — | Do not auto-open the browser |
+
+```bash
+node tools/mdserve/server.js -f reports/analysis.md -p 9000
+```
+
+The viewer runs entirely offline on `localhost` — nothing is sent anywhere. Stop it with **Ctrl+C** (or `kill $(lsof -ti tcp:8765)` if it runs in the background). Requires Node.js 18+.
+

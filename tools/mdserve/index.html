@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>archguard — report</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="status"><span class="dot"></span><span id="status-text">loading…</span></div>
+  <main id="content"></main>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    const statusText = document.getElementById("status-text");
+    const contentEl = document.getElementById("content");
+    let lastMtime = null, firstLoad = true;
+
+    marked.setOptions({ gfm: true, breaks: false });
+
+    function setStatus(text, flash) {
+      statusText.textContent = text;
+      statusEl.classList.toggle("flash", !!flash);
+    }
+
+    const SEV = { critical: "✕", high: "!", medium: "▲", low: "i" };
+
+    const LANG = {
+      php: ["#777bb3", "PHP"], go: ["#00add8", "Go"], python: ["#3776ab", "Python"],
+      javascript: ["#f7df1e", "JavaScript"], typescript: ["#3178c6", "TypeScript"],
+      java: ["#f89820", "Java"], csharp: ["#9b4f96", "C#"], ruby: ["#cc342d", "Ruby"],
+      kotlin: ["#a97bff", "Kotlin"], swift: ["#f05138", "Swift"], rust: ["#dea584", "Rust"],
+      c: ["#5c6bc0", "C"], cpp: ["#00599c", "C++"], scala: ["#dc322f", "Scala"],
+      lua: ["#000080", "Lua"], elixir: ["#6e4a7e", "Elixir"], hcl: ["#7b42bc", "HCL"],
+    };
+    const LLM_ICON = { anthropic: "✦", openai: "◎", gemini: "✷" };
+
+    function sectionEl(h2text) {
+      const hs = [...contentEl.querySelectorAll("h2")];
+      const h = hs.find(x => x.textContent.trim().toLowerCase().startsWith(h2text));
+      if (!h) return null;
+      let el = h.nextElementSibling;
+      while (el && !["UL", "OL", "TABLE"].includes(el.tagName)) el = el.nextElementSibling;
+      return el;
+    }
+
+    function enhanceMeta() {
+      const h1 = contentEl.querySelector("h1");
+      if (!h1) return;
+      let ul = h1.nextElementSibling;
+      while (ul && ul.tagName !== "UL") ul = ul.nextElementSibling;
+      if (!ul) return;
+
+      const project = h1.textContent.replace(/^Architecture Analysis Report:\s*/i, "").trim();
+      const items = [...ul.querySelectorAll("li")].map(li => {
+        const t = li.textContent;
+        const i = t.indexOf(":");
+        return { k: t.slice(0, i).trim(), v: t.slice(i + 1).trim() };
+      });
+      const get = k => (items.find(x => x.k.toLowerCase() === k) || {}).v || "";
+
+      const langRaw = (get("language") || "").toLowerCase();
+      const [langColor, langLabel] = LANG[langRaw] || ["#8a94a6", get("language") || "—"];
+      const langBadge = get("language")
+        ? `<span class="hbadge lang"><span class="langdot" style="background:${langColor}"></span>${langLabel}</span>`
+        : "";
+
+      const llmRaw = get("llm");
+      let llmBadge = "";
+      if (llmRaw) {
+        const mm = llmRaw.match(/^([^(]+?)\s*(?:\(([^)]+)\))?$/);
+        const provider = (mm && mm[1] ? mm[1] : llmRaw).trim();
+        const model = mm && mm[2] ? mm[2] : "";
+        const icon = LLM_ICON[provider.toLowerCase()] || "🤖";
+        llmBadge = `<span class="hbadge llm"><span class="lbl">LLM</span>${icon} ${provider}${model ? ` · <span class="model">${model}</span>` : ""}</span>`;
+      }
+      const timeBadge = get("analyzed at")
+        ? `<span class="hbadge"><span class="time">🕒 ${get("analyzed at")}</span></span>` : "";
+
+      const hero = document.createElement("div");
+      hero.className = "hero";
+      hero.innerHTML = `
+        <div class="brand"><span class="logo"></span><span class="word">arch<span class="g">guard</span></span></div>
+        <h1>${project || "Architecture report"}</h1>
+        <div class="meta">${langBadge}${llmBadge}${timeBadge}</div>`;
+
+      const order = [
+        ["Files", "files scanned"],
+        ["Tool calls", "tool calls"],
+        ["Duration", "duration"],
+        ["Violations", "violations"],
+      ];
+      const stats = document.createElement("div");
+      stats.className = "stats";
+      stats.innerHTML = order.map(([label, key]) => {
+        const v = get(key);
+        if (!v) return "";
+        const danger = key === "violations" && parseInt(v, 10) > 0;
+        const mono = /\d{2}:\d{2}/.test(v);
+        return `<div class="stat${danger ? " danger" : ""}">
+          <div class="k">${label}</div><div class="v${mono ? " mono" : ""}">${v}</div></div>`;
+      }).join("");
+
+      h1.replaceWith(hero);
+      hero.after(stats);
+      ul.remove();
+    }
+
+    function enhanceSeverity() {
+      const t = sectionEl("by severity");
+      if (!t || t.tagName !== "TABLE") return;
+      const rows = [...t.querySelectorAll("tbody tr")].map(tr => {
+        const td = tr.querySelectorAll("td");
+        return { sev: td[0].textContent.trim().toLowerCase(), n: td[1].textContent.trim() };
+      });
+      const bar = document.createElement("div");
+      bar.className = "sevbar";
+      bar.innerHTML = rows.map(r => `
+        <div class="sevpill ${r.sev}">
+          <div class="ic">${SEV[r.sev] || "•"}</div>
+          <div><div class="n">${r.n}</div><div class="lab">${r.sev}</div></div>
+        </div>`).join("");
+      t.replaceWith(bar);
+    }
+
+    function enhanceCategory() {
+      const t = sectionEl("by category");
+      if (!t || t.tagName !== "TABLE") return;
+      const rows = [...t.querySelectorAll("tbody tr")].map(tr => {
+        const td = tr.querySelectorAll("td");
+        return { c: td[0].textContent.trim(), n: td[1].textContent.trim() };
+      });
+      const box = document.createElement("div");
+      box.className = "chips";
+      box.innerHTML = rows.map(r => `<span class="catchip">${r.c} <b>${r.n}</b></span>`).join("");
+      t.replaceWith(box);
+    }
+
+    function enhanceViolations() {
+      let curSev = "low";
+      const kids = [...contentEl.children];
+      for (const el of kids) {
+        if (el.tagName === "H3") {
+          curSev = el.textContent.trim().toLowerCase();
+          continue;
+        }
+        const strong = el.tagName === "P" && el.querySelector("strong");
+        if (!strong) continue;
+        const txt = strong.textContent.trim();
+        const m = txt.match(/^(\d+)\.\s*/);
+        if (!m) continue;
+
+        const sevTok = (txt.match(/\[(critical|high|medium|low)\]/i) || [])[1];
+        const sev = (sevTok || curSev).toLowerCase();
+
+        const cat = (txt.match(/\[([^\]]+)\]/) || [])[1] || "";
+
+        let title = txt.replace(/^\d+\.\s*/, "")
+                       .replace(/\[[^\]]+\]/, "")
+                       .replace(/\[(critical|high|medium|low)\]/i, "")
+                       .replace(/^[\s:]+/, "")
+                       .replace(/^[a-z_]+\s*:\s*/i, "")
+                       .trim();
+
+        const ul = el.nextElementSibling && el.nextElementSibling.tagName === "UL" ? el.nextElementSibling : null;
+        let file = "", line = "", desc = "", sug = "";
+        if (ul) {
+          for (const li of ul.querySelectorAll("li")) {
+            const lt = li.textContent;
+            const body = li.innerHTML.replace(/^[^:]*:\s*/, "");
+            if (/^File:/i.test(lt)) {
+              const code = li.querySelector("code");
+              file = code ? code.textContent : body;
+              line = (lt.match(/line\s+(\d+)/i) || [])[1] || "";
+            } else if (/^Description:/i.test(lt)) desc = body;
+            else if (/^Suggestion:/i.test(lt)) sug = body;
+          }
+        }
+
+        const card = document.createElement("div");
+        card.className = "vcard " + sev;
+        card.innerHTML = `
+          <div class="vhead">
+            <span class="badge ${sev}"><span class="x">${SEV[sev] || "•"}</span>${sev.toUpperCase()}</span>
+            ${cat ? `<span class="vchip">${cat}</span>` : ""}
+            <span class="vnum">#${m[1]}</span>
+          </div>
+          ${title ? `<div class="vtitle">${title}</div>` : ""}
+          ${file ? `<div class="vfile">📄 <code>${file}</code>${line ? `<span class="ln">line ${line}</span>` : ""}</div>` : ""}
+          ${desc ? `<div class="vdesc">${desc}</div>` : ""}
+          ${sug ? `<div class="vsuggest"><span class="sl">💡 Suggestion</span>${sug}</div>` : ""}`;
+
+        el.replaceWith(card);
+        if (ul) ul.remove();
+      }
+    }
+
+    function enhanceAudit() {
+      const t = sectionEl("audit log");
+      if (t && t.tagName === "TABLE") {
+        const heads = [...t.querySelectorAll("th")].map(th => th.textContent.trim().toLowerCase());
+        const di = heads.indexOf("decision");
+        const ei = heads.indexOf("error");
+        if (di >= 0) {
+          for (const tr of t.querySelectorAll("tbody tr")) {
+            const td = tr.querySelectorAll("td");
+            const dec = td[di].textContent.trim();
+            const denied = /deny|denied|blocked/i.test(dec);
+            const warn = /session|user_allowed/i.test(dec);
+            const cls = denied ? "deny" : warn ? "warn" : "ok";
+            const icon = denied ? "✕" : "✓";
+            td[di].classList.add("dec");
+            td[di].innerHTML = `<span class="pill ${cls}">${icon} ${dec}</span>`;
+            if (ei >= 0 && td[ei] && td[ei].textContent.trim()) {
+              td[ei].innerHTML = `<span class="err">${td[ei].textContent.trim()}</span>`;
+            }
+          }
+        }
+      }
+    }
+
+    function enhanceModules() {
+      const ul = sectionEl("analyzed modules");
+      if (ul && ul.tagName === "UL") {
+        ul.classList.add("checklist");
+        for (const li of ul.querySelectorAll("li")) {
+          li.innerHTML = `<span class="ck">✓</span> ${li.innerHTML}`;
+        }
+      }
+    }
+
+    function enhance() {
+      try { enhanceMeta(); } catch (e) { console.warn("meta", e); }
+      try { enhanceSeverity(); } catch (e) { console.warn("sev", e); }
+      try { enhanceCategory(); } catch (e) { console.warn("cat", e); }
+      try { enhanceViolations(); } catch (e) { console.warn("viol", e); }
+      try { enhanceAudit(); } catch (e) { console.warn("audit", e); }
+      try { enhanceModules(); } catch (e) { console.warn("mods", e); }
+    }
+
+    async function loadReport() {
+      try {
+        const res = await fetch("/report.md", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const md = await res.text();
+        const y = window.scrollY;
+        contentEl.innerHTML = marked.parse(md);
+        enhance();
+        if (!firstLoad) window.scrollTo(0, y);
+        firstLoad = false;
+        setStatus("updated " + new Date().toLocaleTimeString(), true);
+        setTimeout(() => setStatus("live", false), 1400);
+      } catch (e) {
+        contentEl.innerHTML = '<p class="err">Failed to load report.md: ' + e.message + "</p>";
+        setStatus("error", false);
+      }
+    }
+
+    async function poll() {
+      try {
+        const { mtime } = await (await fetch("/mtime", { cache: "no-store" })).json();
+        if (mtime !== lastMtime) { lastMtime = mtime; await loadReport(); }
+      } catch { setStatus("server unreachable", false); }
+    }
+    poll();
+    setInterval(poll, 1000);
+  </script>
+</body>
+</html>
